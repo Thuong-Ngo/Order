@@ -1,0 +1,1119 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Quản Lý Quán Nước</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 
+    ======================================================
+    HƯỚNG DẪN TÍCH HỢP FIREBASE:
+    1. Tạo project trên https://console.firebase.google.com
+    2. Bật Realtime Database (hoặc Firestore)
+    3. Bật Authentication (Anonymous)
+    4. Thay toàn bộ phần FIREBASE CONFIG bên dưới
+    5. Tìm comment "// FIREBASE:" để biết chỗ cần thay thế
+    ======================================================
+    -->
+
+    <!-- FIREBASE SDK - Bỏ comment khi đã có config thật -->
+    <!--
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+        import { getDatabase, ref, set, get, onValue, push, remove } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+
+        const firebaseConfig = {
+            apiKey: "YOUR_API_KEY",
+            authDomain: "YOUR_PROJECT.firebaseapp.com",
+            databaseURL: "https://YOUR_PROJECT-default-rtdb.firebaseio.com",
+            projectId: "YOUR_PROJECT",
+            storageBucket: "YOUR_PROJECT.appspot.com",
+            messagingSenderId: "YOUR_ID",
+            appId: "YOUR_APP_ID"
+        };
+        const app = initializeApp(firebaseConfig);
+        window.db = getDatabase(app);
+        window.fbRef = ref;
+        window.fbSet = set;
+        window.fbGet = get;
+        window.fbOnValue = onValue;
+        window.fbPush = push;
+        window.fbRemove = remove;
+        window.FIREBASE_READY = true;
+
+        // Lắng nghe đơn hàng realtime
+        onValue(ref(window.db, 'orders'), (snapshot) => {
+            orders = snapshot.val() ? Object.values(snapshot.val()) : [];
+            if (isAdminLoggedIn) renderAdminDashboard();
+            renderSharedOrderView();
+        });
+
+        // Lắng nghe menu realtime
+        onValue(ref(window.db, 'menu'), (snapshot) => {
+            if (snapshot.val()) {
+                menu = Object.values(snapshot.val());
+                initMenuDropdowns();
+                if (isAdminLoggedIn) renderMenuTable();
+            }
+        });
+
+        // Lắng nghe tên quán
+        onValue(ref(window.db, 'shopName'), (snapshot) => {
+            if (snapshot.val()) {
+                shopName = snapshot.val();
+                document.getElementById('shop-name-display').innerText = shopName;
+                document.getElementById('shop-name-input').value = shopName;
+            }
+        });
+    </script>
+    -->
+
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        ocean: {
+                            50: '#f0f9ff',
+                            100: '#e0f2fe',
+                            200: '#bae6fd',
+                            400: '#38bdf8',
+                            500: '#0ea5e9',
+                            600: '#0284c7',
+                            700: '#0369a1',
+                            800: '#075985',
+                            900: '#0c4a6e',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@300;400;500;600;700;800;900&display=swap');
+        body { font-family: 'Be Vietnam Pro', sans-serif; }
+        .fade-in { animation: fadeIn .25s ease; }
+        @keyframes fadeIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:translateY(0); } }
+        .tab-active { background: #0ea5e9; color: white; box-shadow: 0 2px 8px rgba(14,165,233,.35); }
+        .tab-inactive { background: white; color: #0369a1; }
+        ::-webkit-scrollbar { width: 5px; height: 5px; }
+        ::-webkit-scrollbar-track { background: #f0f9ff; }
+        ::-webkit-scrollbar-thumb { background: #bae6fd; border-radius: 99px; }
+        .modal-backdrop { animation: fadeIn .2s ease; }
+        input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; }
+        .qty-btn { transition: all .15s; }
+        .qty-btn:hover { transform: scale(1.1); }
+    </style>
+</head>
+<body class="bg-slate-50 min-h-screen">
+
+<!-- HEADER -->
+<header class="bg-gradient-to-r from-ocean-700 via-ocean-600 to-ocean-500 text-white shadow-lg sticky top-0 z-40">
+    <div class="max-w-7xl mx-auto px-4 py-3 flex flex-col sm:flex-row justify-between items-center gap-3">
+        <div class="flex items-center gap-3">
+            <div class="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center text-xl">☕</div>
+            <div>
+                <h1 id="shop-name-display" class="text-2xl font-black tracking-wide leading-none">QUÁN CAFE THUÝ</h1>
+                <p class="text-ocean-100 text-xs mt-0.5">Hân hạnh được phục vụ quý khách 🌊</p>
+            </div>
+        </div>
+        <div class="flex gap-2 bg-white/10 p-1 rounded-full">
+            <button onclick="switchView('customer')" id="btn-customer"
+                class="px-5 py-2 rounded-full text-sm font-bold transition-all tab-active">
+                🛒 Đặt Nước
+            </button>
+            <button onclick="switchView('admin')" id="btn-admin"
+                class="px-5 py-2 rounded-full text-sm font-bold transition-all tab-inactive">
+                ⚙️ Admin
+            </button>
+        </div>
+    </div>
+</header>
+
+<main class="max-w-7xl mx-auto px-3 py-5 sm:px-6">
+
+<!-- ============================================================ -->
+<!--  PHẦN KHÁCH ORDER                                             -->
+<!-- ============================================================ -->
+<section id="customer-section" class="space-y-5">
+
+    <!-- Banner thông báo đơn hàng chung -->
+    <div id="shared-order-banner" class="bg-ocean-50 border border-ocean-200 rounded-2xl p-4 hidden">
+        <h3 class="text-sm font-bold text-ocean-700 mb-2 flex items-center gap-2">
+            <span>👀</span> Đơn đã đặt trong phiên này
+        </h3>
+        <div id="shared-order-list" class="space-y-1 text-sm text-slate-600 max-h-28 overflow-y-auto"></div>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-5 gap-5">
+        <!-- FORM ĐẶT NƯỚC -->
+        <div class="lg:col-span-3 bg-white rounded-2xl p-5 shadow-sm border border-slate-100">
+            <h2 class="text-lg font-bold text-ocean-700 mb-4 flex items-center gap-2">
+                <span class="w-8 h-8 bg-ocean-100 rounded-lg flex items-center justify-center">📝</span>
+                Thông tin đặt món
+            </h2>
+
+            <div class="grid grid-cols-2 gap-3 mb-4">
+                <div>
+                    <label class="block text-xs font-bold text-slate-400 uppercase tracking-wide mb-1">Ngày đặt</label>
+                    <input type="date" id="order-date" readonly
+                        class="w-full border border-slate-200 rounded-xl px-3 py-2.5 bg-slate-50 text-sm font-medium text-slate-600">
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-slate-400 uppercase tracking-wide mb-1">Đơn vị / Phòng ban</label>
+                    <input type="text" id="order-dept" placeholder="Phòng Kế Toán, Nhóm A..."
+                        class="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-ocean-400">
+                </div>
+            </div>
+
+            <div class="mb-3">
+                <label class="block text-xs font-bold text-slate-400 uppercase tracking-wide mb-1">Tên khách hàng</label>
+                <input type="text" id="cust-name" placeholder="Nhập tên của bạn..."
+                    class="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-ocean-400">
+            </div>
+
+            <div class="grid grid-cols-2 gap-3 mb-3">
+                <div>
+                    <label class="block text-xs font-bold text-slate-400 uppercase tracking-wide mb-1">Loại thức uống</label>
+                    <select id="drink-category" onchange="updateDrinkOptions()"
+                        class="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-ocean-400">
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-slate-400 uppercase tracking-wide mb-1">Tên món</label>
+                    <select id="drink-name" onchange="updatePriceDisplay()"
+                        class="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-ocean-400">
+                    </select>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-3 mb-3">
+                <div>
+                    <label class="block text-xs font-bold text-slate-400 uppercase tracking-wide mb-1">Số lượng</label>
+                    <div class="flex items-center border border-slate-200 rounded-xl overflow-hidden">
+                        <button onclick="adjustQty(-1)" class="qty-btn px-4 py-2.5 bg-slate-50 hover:bg-ocean-50 text-ocean-600 font-bold text-lg">−</button>
+                        <input type="number" id="drink-qty" value="1" min="1"
+                            class="w-full text-center font-bold text-base focus:outline-none py-2 bg-white">
+                        <button onclick="adjustQty(1)" class="qty-btn px-4 py-2.5 bg-slate-50 hover:bg-ocean-50 text-ocean-600 font-bold text-lg">+</button>
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-slate-400 uppercase tracking-wide mb-1">Đơn giá</label>
+                    <div class="border border-slate-200 rounded-xl px-3 py-2.5 bg-ocean-50 text-center">
+                        <span id="unit-price" class="text-lg font-black text-ocean-600">—</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="mb-4">
+                <label class="block text-xs font-bold text-slate-400 uppercase tracking-wide mb-1">Ghi chú</label>
+                <input type="text" id="drink-note" placeholder="Ít đường, không đá, thêm topping..."
+                    class="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-ocean-400">
+            </div>
+
+            <div class="flex justify-between items-center bg-gradient-to-r from-ocean-50 to-blue-50 border border-ocean-100 p-4 rounded-xl mb-4">
+                <span class="text-sm font-semibold text-slate-600">Thành tiền:</span>
+                <span id="temp-price" class="text-2xl font-black text-ocean-600">0đ</span>
+            </div>
+
+            <button onclick="addToCart()"
+                class="w-full bg-ocean-500 hover:bg-ocean-600 active:scale-98 text-white font-bold py-3 rounded-xl transition-all shadow-md shadow-ocean-100 flex items-center justify-center gap-2 text-sm">
+                ➕ Thêm vào danh sách đặt
+            </button>
+        </div>
+
+        <!-- GIỎ HÀNG -->
+        <div class="lg:col-span-2 bg-white rounded-2xl p-5 shadow-sm border border-slate-100 flex flex-col">
+            <div class="flex items-center justify-between mb-4">
+                <h2 class="text-lg font-bold text-ocean-700 flex items-center gap-2">
+                    <span class="w-8 h-8 bg-ocean-100 rounded-lg flex items-center justify-center">🛒</span>
+                    Đơn của bạn
+                </h2>
+                <span id="cart-count" class="bg-ocean-500 text-white text-xs font-bold px-2.5 py-1 rounded-full">0 món</span>
+            </div>
+
+            <div id="cart-items" class="flex-1 space-y-2.5 min-h-[200px] max-h-[340px] overflow-y-auto pr-1">
+                <div class="flex flex-col items-center justify-center h-40 text-slate-300">
+                    <div class="text-4xl mb-2">🧃</div>
+                    <p class="text-sm">Chưa chọn món nào</p>
+                </div>
+            </div>
+
+            <div class="mt-4 pt-4 border-t border-slate-100 space-y-3">
+                <div class="flex justify-between items-center">
+                    <span class="text-sm font-bold text-slate-600">Tổng thanh toán:</span>
+                    <span id="cart-total" class="text-2xl font-black text-rose-500">0đ</span>
+                </div>
+                <button onclick="submitOrder()"
+                    class="w-full bg-emerald-500 hover:bg-emerald-600 text-white font-bold py-3 rounded-xl transition-all shadow-md shadow-emerald-100 text-sm">
+                    ✅ Hoàn tất đặt hàng
+                </button>
+                <p class="text-center text-xs text-slate-400 italic">✨ Cảm ơn vì khách đã lựa chọn quán em ✨</p>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- ============================================================ -->
+<!--  PHẦN ADMIN                                                   -->
+<!-- ============================================================ -->
+<section id="admin-section" class="hidden space-y-5">
+
+    <!-- Login Box -->
+    <div id="admin-login-box" class="max-w-sm mx-auto bg-white rounded-2xl p-6 shadow-md border border-slate-100 mt-10 fade-in">
+        <div class="text-center mb-5">
+            <div class="w-14 h-14 bg-ocean-100 rounded-2xl flex items-center justify-center text-2xl mx-auto mb-3">🔐</div>
+            <h2 class="text-lg font-black text-slate-800">Đăng nhập Admin</h2>
+            <p class="text-xs text-slate-400 mt-1">Chỉ dành cho quản lý quán</p>
+        </div>
+        <div class="space-y-3">
+            <div>
+                <label class="block text-xs font-bold text-slate-500 mb-1">Tài khoản</label>
+                <input type="text" id="admin-user" placeholder="Tài khoản" onkeydown="if(event.key==='Enter')loginAdmin()"
+                    class="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-ocean-400">
+            </div>
+            <div>
+                <label class="block text-xs font-bold text-slate-500 mb-1">Mật khẩu</label>
+                <input type="password" id="admin-pass" placeholder="Mật khẩu" onkeydown="if(event.key==='Enter')loginAdmin()"
+                    class="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-ocean-400">
+            </div>
+            <p id="login-error" class="text-red-500 text-xs hidden">❌ Sai tài khoản hoặc mật khẩu</p>
+            <button onclick="loginAdmin()"
+                class="w-full bg-ocean-600 hover:bg-ocean-700 text-white font-bold py-2.5 rounded-xl transition-all text-sm shadow">
+                Đăng Nhập
+            </button>
+        </div>
+    </div>
+
+    <!-- Admin Content -->
+    <div id="admin-content" class="hidden space-y-5 fade-in">
+
+        <!-- Action Bar -->
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div class="bg-white rounded-xl p-4 shadow-sm border border-slate-100">
+                <p class="text-xs font-bold text-slate-400 mb-1.5">Tên quán nước</p>
+                <input type="text" id="shop-name-input" value="QUÁN CAFE THUÝ"
+                    class="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-sm mb-2">
+                <button onclick="changeShopName()"
+                    class="w-full bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold py-1.5 rounded-lg">
+                    Cập nhật tên
+                </button>
+            </div>
+
+            <div class="bg-white rounded-xl p-4 shadow-sm border border-slate-100">
+                <p class="text-xs font-bold text-slate-400 mb-1.5">Lọc theo ngày</p>
+                <input type="date" id="admin-filter-date" onchange="renderAdminDashboard()"
+                    class="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-sm mb-2">
+                <p class="text-xs text-slate-400">Xem báo cáo theo ngày đã chọn</p>
+            </div>
+
+            <div class="bg-white rounded-xl p-4 shadow-sm border border-slate-100 flex flex-col justify-between">
+                <div>
+                    <p class="text-xs font-bold text-slate-400 mb-1">Reset đơn hàng</p>
+                    <p class="text-xs text-slate-400 leading-relaxed">Xóa toàn bộ đơn hàng hiện tại để bắt đầu phiên mới cho khách.</p>
+                </div>
+                <button onclick="resetOrders()"
+                    class="mt-2 w-full bg-rose-500 hover:bg-rose-600 text-white text-xs font-bold py-2 rounded-lg">
+                    💥 Reset Đơn Hàng Mới
+                </button>
+            </div>
+
+            <div class="bg-white rounded-xl p-4 shadow-sm border border-slate-100 flex flex-col justify-between">
+                <div>
+                    <p class="text-xs font-bold text-slate-400 mb-1">Đăng xuất</p>
+                    <p class="text-xs text-slate-400">Thoát khỏi trang quản trị.</p>
+                </div>
+                <button onclick="logoutAdmin()"
+                    class="mt-2 w-full bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-bold py-2 rounded-lg">
+                    🔓 Đăng Xuất
+                </button>
+            </div>
+        </div>
+
+        <!-- Stats Cards -->
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div class="bg-gradient-to-br from-ocean-500 to-ocean-700 rounded-xl p-4 text-white shadow">
+                <p class="text-xs opacity-80 font-medium">Doanh thu hôm nay</p>
+                <p id="stat-today-rev" class="text-2xl font-black mt-1">0đ</p>
+            </div>
+            <div class="bg-gradient-to-br from-emerald-500 to-emerald-700 rounded-xl p-4 text-white shadow">
+                <p class="text-xs opacity-80 font-medium">Số đơn hôm nay</p>
+                <p id="stat-today-orders" class="text-2xl font-black mt-1">0</p>
+            </div>
+            <div class="bg-gradient-to-br from-violet-500 to-violet-700 rounded-xl p-4 text-white shadow">
+                <p class="text-xs opacity-80 font-medium">Tổng ly hôm nay</p>
+                <p id="stat-today-cups" class="text-2xl font-black mt-1">0</p>
+            </div>
+            <div class="bg-gradient-to-br from-amber-500 to-amber-600 rounded-xl p-4 text-white shadow">
+                <p class="text-xs opacity-80 font-medium">Doanh thu tháng này</p>
+                <p id="stat-month-rev" class="text-2xl font-black mt-1">0đ</p>
+            </div>
+        </div>
+
+        <!-- Main Dashboard -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
+
+            <!-- Tổng hợp món cần chuẩn bị -->
+            <div class="bg-white rounded-2xl p-5 shadow-sm border border-slate-100">
+                <h3 class="font-bold text-slate-700 border-b border-slate-100 pb-3 mb-3 flex items-center gap-2">
+                    <span class="text-ocean-500">🥤</span> Cần chuẩn bị
+                    <span class="text-xs text-slate-400 font-normal">(theo ngày lọc)</span>
+                </h3>
+                <div class="overflow-y-auto max-h-72">
+                    <table class="w-full text-sm">
+                        <thead class="text-xs font-bold text-slate-400 uppercase">
+                            <tr>
+                                <th class="pb-2 text-left">Tên món</th>
+                                <th class="pb-2 text-center">SL</th>
+                                <th class="pb-2 text-left pl-3">Người đặt</th>
+                            </tr>
+                        </thead>
+                        <tbody id="summary-drink-table" class="divide-y divide-slate-50"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Chi tiết đơn hàng theo ngày -->
+            <div class="lg:col-span-2 bg-white rounded-2xl p-5 shadow-sm border border-slate-100">
+                <div class="flex items-center justify-between border-b border-slate-100 pb-3 mb-3">
+                    <h3 class="font-bold text-slate-700 flex items-center gap-2">
+                        <span class="text-ocean-500">📋</span> Chi tiết đơn hàng
+                    </h3>
+                    <div class="flex gap-2 items-center">
+                        <input type="text" id="filter-dept" placeholder="Lọc đơn vị..." onkeyup="renderAdminDashboard()"
+                            class="border border-slate-200 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-ocean-400 w-28">
+                    </div>
+                </div>
+                <div class="overflow-x-auto max-h-72 overflow-y-auto">
+                    <table class="w-full text-sm min-w-[500px]">
+                        <thead class="text-xs font-bold text-slate-400 uppercase bg-slate-50 sticky top-0">
+                            <tr>
+                                <th class="p-2 text-left rounded-l">Đơn vị</th>
+                                <th class="p-2 text-left">Người đặt</th>
+                                <th class="p-2 text-left">Tên nước</th>
+                                <th class="p-2 text-center">SL</th>
+                                <th class="p-2 text-right">Giá</th>
+                                <th class="p-2 text-left rounded-r">Ghi chú</th>
+                            </tr>
+                        </thead>
+                        <tbody id="admin-detail-table" class="divide-y divide-slate-50"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Báo cáo doanh thu theo tháng -->
+        <div class="bg-white rounded-2xl p-5 shadow-sm border border-slate-100">
+            <div class="flex items-center justify-between border-b border-slate-100 pb-3 mb-4">
+                <h3 class="font-bold text-slate-700 flex items-center gap-2">
+                    <span class="text-ocean-500">📊</span> Doanh thu theo tháng
+                </h3>
+                <select id="revenue-year" onchange="renderAdminDashboard()"
+                    class="border border-slate-200 rounded-lg px-2 py-1 text-xs bg-white focus:outline-none">
+                </select>
+            </div>
+            <div id="monthly-chart" class="space-y-2"></div>
+        </div>
+
+        <!-- Quản lý menu -->
+        <div class="bg-white rounded-2xl p-5 shadow-sm border border-slate-100">
+            <div class="flex items-center justify-between border-b border-slate-100 pb-3 mb-4">
+                <h3 class="font-bold text-slate-700 flex items-center gap-2">
+                    <span class="text-ocean-500">🛠️</span> Quản lý Menu & Giá
+                </h3>
+                <button onclick="openAddDrinkModal()"
+                    class="bg-ocean-500 hover:bg-ocean-600 text-white text-xs font-bold px-3 py-1.5 rounded-lg flex items-center gap-1">
+                    + Thêm món mới
+                </button>
+            </div>
+
+            <!-- Filter menu -->
+            <div class="flex gap-2 mb-3 flex-wrap">
+                <input type="text" id="menu-search" placeholder="Tìm tên món..." onkeyup="renderMenuTable()"
+                    class="border border-slate-200 rounded-lg px-3 py-1.5 text-xs flex-1 focus:outline-none focus:ring-1 focus:ring-ocean-400">
+                <select id="menu-filter-cat" onchange="renderMenuTable()"
+                    class="border border-slate-200 rounded-lg px-2 py-1.5 text-xs bg-white focus:outline-none focus:ring-1 focus:ring-ocean-400">
+                    <option value="">Tất cả loại</option>
+                </select>
+            </div>
+
+            <div class="overflow-x-auto max-h-96 overflow-y-auto">
+                <table class="w-full text-sm min-w-[400px]">
+                    <thead class="text-xs font-bold text-slate-400 uppercase bg-slate-50 sticky top-0">
+                        <tr>
+                            <th class="p-2.5 text-left rounded-l">Loại</th>
+                            <th class="p-2.5 text-left">Tên món</th>
+                            <th class="p-2.5 text-right">Giá</th>
+                            <th class="p-2.5 text-center rounded-r">Thao tác</th>
+                        </tr>
+                    </thead>
+                    <tbody id="admin-menu-table" class="divide-y divide-slate-50"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</section>
+
+</main>
+
+<!-- ============================================================ -->
+<!--  MODALS                                                        -->
+<!-- ============================================================ -->
+
+<!-- Modal Xác nhận đặt hàng thành công -->
+<div id="success-modal" class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 hidden modal-backdrop">
+    <div class="bg-white rounded-2xl max-w-md w-full p-6 text-center shadow-2xl fade-in">
+        <div class="w-16 h-16 bg-emerald-100 text-emerald-500 rounded-full flex items-center justify-center text-3xl mx-auto mb-4">✓</div>
+        <h3 class="text-xl font-black text-slate-800 mb-1">Đặt Hàng Thành Công!</h3>
+        <p class="text-sm text-slate-400 mb-4">Đây là các món bạn vừa đặt:</p>
+        <div id="modal-summary" class="bg-slate-50 rounded-xl p-3 text-left text-sm space-y-2 max-h-52 overflow-y-auto mb-5"></div>
+        <div id="modal-total-row" class="flex justify-between items-center bg-ocean-50 rounded-xl px-4 py-3 mb-5">
+            <span class="font-bold text-slate-700">Tổng tiền:</span>
+            <span id="modal-total" class="font-black text-xl text-ocean-600"></span>
+        </div>
+        <p class="text-xs text-slate-400 italic mb-4">✨ Cảm ơn vì khách đã lựa chọn quán em ✨</p>
+        <button onclick="closeSuccessModal()"
+            class="w-full bg-ocean-500 hover:bg-ocean-600 text-white font-bold py-3 rounded-xl transition-all">
+            Đóng & Đặt tiếp
+        </button>
+    </div>
+</div>
+
+<!-- Modal Thêm / Sửa món -->
+<div id="drink-modal" class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 hidden modal-backdrop">
+    <div class="bg-white rounded-2xl max-w-sm w-full p-6 shadow-2xl fade-in">
+        <h3 id="drink-modal-title" class="text-lg font-black text-slate-800 mb-4">Thêm Món Mới</h3>
+        <input type="hidden" id="edit-drink-index">
+        <div class="space-y-3">
+            <div>
+                <label class="text-xs font-bold text-slate-400 mb-1 block">Loại thức uống</label>
+                <input type="text" id="modal-drink-cat" placeholder="VD: Coffee, Trà, Sinh tố..."
+                    list="cat-suggestions"
+                    class="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-ocean-400">
+                <datalist id="cat-suggestions"></datalist>
+            </div>
+            <div>
+                <label class="text-xs font-bold text-slate-400 mb-1 block">Tên món</label>
+                <input type="text" id="modal-drink-name" placeholder="VD: Bạc xỉu đặc biệt..."
+                    class="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-ocean-400">
+            </div>
+            <div>
+                <label class="text-xs font-bold text-slate-400 mb-1 block">Giá bán (nghìn đồng)</label>
+                <input type="number" id="modal-drink-price" placeholder="VD: 25"
+                    class="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-ocean-400">
+            </div>
+        </div>
+        <div class="flex gap-2 mt-5">
+            <button onclick="saveDrink()"
+                class="flex-1 bg-ocean-500 hover:bg-ocean-600 text-white font-bold py-2.5 rounded-xl text-sm">Lưu</button>
+            <button onclick="closeDrinkModal()"
+                class="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold py-2.5 rounded-xl text-sm">Hủy</button>
+        </div>
+    </div>
+</div>
+
+<!-- ============================================================ -->
+<!--  JAVASCRIPT                                                   -->
+<!-- ============================================================ -->
+<script>
+// =====================================================
+// DỮ LIỆU MẶC ĐỊNH (đầy đủ từ file Excel)
+// =====================================================
+const defaultMenu = [
+    // Coffee
+    { cat: "Coffee", name: "cafe đá", price: 15 },
+    { cat: "Coffee", name: "cafe sữa nhỏ", price: 18 },
+    { cat: "Coffee", name: "cafe sữa lớn", price: 24 },
+    { cat: "Coffee", name: "cafe muối nhỏ", price: 23 },
+    { cat: "Coffee", name: "cafe muối lớn", price: 28 },
+    { cat: "Coffee", name: "cafe sữa sương sáo", price: 28 },
+    { cat: "Coffee", name: "bạc xỉu", price: 24 },
+    { cat: "Coffee", name: "bạc xỉu kem", price: 28 },
+    { cat: "Coffee", name: "bạc xỉu sương sáo", price: 28 },
+    { cat: "Coffee", name: "cacao sữa", price: 24 },
+    { cat: "Coffee", name: "cacao sữa kem", price: 28 },
+    { cat: "Coffee", name: "matcha latte", price: 24 },
+    { cat: "Coffee", name: "matcha latte kem", price: 28 },
+    { cat: "Coffee", name: "matcha sương sáo", price: 28 },
+    { cat: "Coffee", name: "matcha dâu", price: 28 },
+    { cat: "Coffee", name: "matcha xoài", price: 28 },
+    { cat: "Coffee", name: "matcha chuối", price: 28 },
+    // Nước ép
+    { cat: "Nước ép", name: "ép cam", price: 20 },
+    { cat: "Nước ép", name: "ép ổi", price: 20 },
+    { cat: "Nước ép", name: "ép carot", price: 20 },
+    { cat: "Nước ép", name: "ép dưa hấu", price: 20 },
+    { cat: "Nước ép", name: "ép chanh dây", price: 20 },
+    { cat: "Nước ép", name: "ép thơm", price: 25 },
+    { cat: "Nước ép", name: "ép táo", price: 25 },
+    { cat: "Nước ép", name: "ép dưa lưới", price: 25 },
+    // Rau má
+    { cat: "Rau má", name: "rau má", price: 15 },
+    { cat: "Rau má", name: "rau má sữa", price: 17 },
+    { cat: "Rau má", name: "rau má sữa dừa", price: 20 },
+    { cat: "Rau má", name: "rau má sữa kem", price: 22 },
+    { cat: "Rau má", name: "rau má sữa đậu đỏ", price: 25 },
+    { cat: "Rau má", name: "rau má dừa", price: 17 },
+    // Trà
+    { cat: "Trà", name: "trà đào", price: 20 },
+    { cat: "Trà", name: "trà vải", price: 20 },
+    { cat: "Trà", name: "trà lipton", price: 20 },
+    { cat: "Trà", name: "trà ổi", price: 20 },
+    { cat: "Trà", name: "trà sen", price: 25 },
+    { cat: "Trà", name: "trà nhãn", price: 25 },
+    { cat: "Trà", name: "trà xoài", price: 25 },
+    { cat: "Trà", name: "trà dâu", price: 25 },
+    { cat: "Trà", name: "trà dưa lưới", price: 25 },
+    { cat: "Trà", name: "trà mãng cầu", price: 25 },
+    { cat: "Trà", name: "trà trái cây", price: 25 },
+    // Sâm
+    { cat: "Sâm", name: "sâm lạnh", price: 12 },
+    { cat: "Sâm", name: "sâm hạt chia", price: 15 },
+    { cat: "Sâm", name: "sâm sương sáo hạt chia", price: 18 },
+    { cat: "Sâm", name: "sâm topping", price: 20 },
+    { cat: "Sâm", name: "đá me", price: 20 },
+    { cat: "Sâm", name: "sâm thảo mộc", price: 25 },
+    { cat: "Sâm", name: "sâm bổ lượng", price: 25 },
+    { cat: "Sâm", name: "sâm dừa", price: 17 },
+    { cat: "Sâm", name: "sâm dứa sữa", price: 17 },
+    // Sinh tố
+    { cat: "Sinh tố", name: "sinh tố bơ", price: 28 },
+    { cat: "Sinh tố", name: "sinh tố bơ kem", price: 32 },
+    { cat: "Sinh tố", name: "sinh tố dâu", price: 28 },
+    { cat: "Sinh tố", name: "sinh tố dâu kem", price: 32 },
+    { cat: "Sinh tố", name: "sinh tố sapo", price: 28 },
+    { cat: "Sinh tố", name: "sinh tố mãng cầu", price: 28 },
+    { cat: "Sinh tố", name: "sinh tố dưa lưới", price: 28 },
+    // Đá xay
+    { cat: "Đá xay", name: "cafe sữa đá xay", price: 28 },
+    { cat: "Đá xay", name: "cacao đá xay", price: 28 },
+    { cat: "Đá xay", name: "việt quất đá xay", price: 28 },
+    { cat: "Đá xay", name: "matcha đá xay", price: 28 },
+    { cat: "Đá xay", name: "chanh tuyết", price: 22 },
+    // Yaourt
+    { cat: "Yaourt", name: "yaua đá", price: 22 },
+    { cat: "Yaourt", name: "yaua dâu", price: 27 },
+    { cat: "Yaourt", name: "yaua xoài", price: 27 },
+    { cat: "Yaourt", name: "yaua việt quất", price: 27 },
+    { cat: "Yaourt", name: "yaua trái cây", price: 32 },
+    // Soda
+    { cat: "Soda", name: "soda dâu", price: 17 },
+    { cat: "Soda", name: "soda việt quất", price: 17 },
+    { cat: "Soda", name: "soda blue", price: 17 },
+    { cat: "Soda", name: "soda bạc hà", price: 17 },
+    // Dừa
+    { cat: "Dừa", name: "dừa đá", price: 20 },
+    { cat: "Dừa", name: "dừa tắc", price: 20 },
+    { cat: "Dừa", name: "dừa tắc xí muội", price: 20 },
+    { cat: "Dừa", name: "dừa nhiệt đới", price: 25 },
+    { cat: "Dừa", name: "dừa hạt chia", price: 25 },
+    { cat: "Dừa", name: "dừa đào", price: 25 },
+    { cat: "Dừa", name: "dừa sen", price: 25 },
+    { cat: "Dừa", name: "dừa thảo mộc", price: 25 },
+    { cat: "Dừa", name: "dừa thảo mộc full topping", price: 30 },
+    // Trà sữa tươi
+    { cat: "Trà sữa tươi", name: "trà sữa tươi", price: 20 },
+    { cat: "Trà sữa tươi", name: "trà sữa tươi trân châu trắng", price: 25 },
+    { cat: "Trà sữa tươi", name: "trà sữa tươi sương sáo", price: 25 },
+    { cat: "Trà sữa tươi", name: "lipton sữa", price: 20 },
+    { cat: "Trà sữa tươi", name: "lipton sữa kem", price: 25 },
+    // Nước giải khát
+    { cat: "Nước giải khát", name: "nước ngọt các loại", price: 15 },
+    { cat: "Nước giải khát", name: "redbull", price: 18 },
+];
+
+// =====================================================
+// TRẠNG THÁI ỨNG DỤNG
+// =====================================================
+// FIREBASE: Thay localStorage bằng Firebase Realtime Database
+// Khi tích hợp Firebase, xóa 3 dòng dưới và dùng onValue listeners trong module firebase
+let menu = JSON.parse(localStorage.getItem('drink_menu')) || JSON.parse(JSON.stringify(defaultMenu));
+let orders = JSON.parse(localStorage.getItem('all_orders')) || [];
+let shopName = localStorage.getItem('shop_name') || 'QUÁN CAFE THUÝ';
+
+let currentCart = [];
+let isAdminLoggedIn = false;
+
+// =====================================================
+// KHỞI TẠO
+// =====================================================
+window.onload = function () {
+    // Ngày hôm nay theo local
+    const now = new Date();
+    const todayLocal = now.getFullYear() + '-' +
+        String(now.getMonth() + 1).padStart(2, '0') + '-' +
+        String(now.getDate()).padStart(2, '0');
+    document.getElementById('order-date').value = todayLocal;
+    document.getElementById('admin-filter-date').value = todayLocal;
+
+    // Năm trong báo cáo
+    const yearSel = document.getElementById('revenue-year');
+    for (let y = 2024; y <= now.getFullYear() + 1; y++) {
+        const o = document.createElement('option');
+        o.value = y; o.textContent = 'Năm ' + y;
+        if (y === now.getFullYear()) o.selected = true;
+        yearSel.appendChild(o);
+    }
+
+    document.getElementById('shop-name-display').innerText = shopName;
+    document.getElementById('shop-name-input').value = shopName;
+    initMenuDropdowns();
+    renderCart();
+    renderSharedOrderView();
+};
+
+// =====================================================
+// CHUYỂN VIEW
+// =====================================================
+function switchView(view) {
+    const secCust = document.getElementById('customer-section');
+    const secAdmin = document.getElementById('admin-section');
+    const btnCust = document.getElementById('btn-customer');
+    const btnAdmin = document.getElementById('btn-admin');
+
+    if (view === 'customer') {
+        secCust.classList.remove('hidden');
+        secAdmin.classList.add('hidden');
+        btnCust.className = 'px-5 py-2 rounded-full text-sm font-bold transition-all tab-active';
+        btnAdmin.className = 'px-5 py-2 rounded-full text-sm font-bold transition-all tab-inactive';
+    } else {
+        secCust.classList.add('hidden');
+        secAdmin.classList.remove('hidden');
+        btnAdmin.className = 'px-5 py-2 rounded-full text-sm font-bold transition-all tab-active';
+        btnCust.className = 'px-5 py-2 rounded-full text-sm font-bold transition-all tab-inactive';
+        if (isAdminLoggedIn) renderAdminDashboard();
+    }
+}
+
+// =====================================================
+// KHÁCH HÀNG: DROPDOWN MENU
+// =====================================================
+function initMenuDropdowns() {
+    const catSel = document.getElementById('drink-category');
+    const cats = [...new Set(menu.map(d => d.cat))];
+    catSel.innerHTML = cats.map(c => `<option value="${c}">${c}</option>`).join('');
+    updateDrinkOptions();
+    populateCatSuggestions();
+}
+
+function updateDrinkOptions() {
+    const cat = document.getElementById('drink-category').value;
+    const nameSel = document.getElementById('drink-name');
+    const items = menu.filter(d => d.cat === cat);
+    nameSel.innerHTML = items.map(d =>
+        `<option value="${d.name}" data-price="${d.price}">${d.name} — ${d.price}k</option>`
+    ).join('');
+    updatePriceDisplay();
+}
+
+function updatePriceDisplay() {
+    const sel = document.getElementById('drink-name');
+    const opt = sel.options[sel.selectedIndex];
+    const price = opt ? parseInt(opt.dataset.price) : 0;
+    const qty = parseInt(document.getElementById('drink-qty').value) || 1;
+    document.getElementById('unit-price').textContent = price ? price + 'k' : '—';
+    document.getElementById('temp-price').textContent = formatMoney(price * qty);
+}
+
+function adjustQty(d) {
+    const inp = document.getElementById('drink-qty');
+    inp.value = Math.max(1, (parseInt(inp.value) || 1) + d);
+    updatePriceDisplay();
+}
+
+document.getElementById('drink-qty').addEventListener('input', updatePriceDisplay);
+
+// =====================================================
+// KHÁCH HÀNG: GIỎ HÀNG
+// =====================================================
+function addToCart() {
+    const name = document.getElementById('cust-name').value.trim();
+    const dept = document.getElementById('order-dept').value.trim();
+    const drinkSel = document.getElementById('drink-name');
+    const drinkName = drinkSel.value;
+    const price = parseInt(drinkSel.options[drinkSel.selectedIndex]?.dataset.price) || 0;
+    const qty = parseInt(document.getElementById('drink-qty').value) || 1;
+    const note = document.getElementById('drink-note').value.trim();
+    const date = document.getElementById('order-date').value;
+
+    if (!name) { alert('Vui lòng nhập tên khách hàng!'); return; }
+    if (!drinkName) { alert('Vui lòng chọn món!'); return; }
+
+    currentCart.push({ name, dept, drinkName, price, qty, note, date, cat: document.getElementById('drink-category').value });
+    renderCart();
+
+    // Reset form
+    document.getElementById('drink-qty').value = 1;
+    document.getElementById('drink-note').value = '';
+    updatePriceDisplay();
+}
+
+function renderCart() {
+    const container = document.getElementById('cart-items');
+    const total = currentCart.reduce((s, i) => s + i.price * i.qty, 0);
+
+    if (currentCart.length === 0) {
+        container.innerHTML = `<div class="flex flex-col items-center justify-center h-40 text-slate-300">
+            <div class="text-4xl mb-2">🧃</div><p class="text-sm">Chưa chọn món nào</p></div>`;
+    } else {
+        container.innerHTML = currentCart.map((item, i) => `
+            <div class="flex items-start gap-2 bg-slate-50 rounded-xl p-3 fade-in">
+                <div class="flex-1 min-w-0">
+                    <p class="font-bold text-sm text-slate-800 truncate">${item.drinkName}</p>
+                    <p class="text-xs text-slate-400">Người đặt: <span class="text-slate-600 font-medium">${item.name}</span></p>
+                    ${item.note ? `<p class="text-xs text-slate-400 italic">"${item.note}"</p>` : ''}
+                    <p class="text-xs text-ocean-600 font-bold mt-0.5">${item.qty} × ${item.price}k = ${formatMoney(item.qty * item.price)}</p>
+                </div>
+                <button onclick="removeFromCart(${i})" class="text-slate-300 hover:text-rose-400 text-lg leading-none transition-colors">×</button>
+            </div>
+        `).join('');
+    }
+
+    document.getElementById('cart-count').textContent = currentCart.length + ' món';
+    document.getElementById('cart-total').textContent = formatMoney(total);
+}
+
+function removeFromCart(i) {
+    currentCart.splice(i, 1);
+    renderCart();
+}
+
+function submitOrder() {
+    if (currentCart.length === 0) { alert('Chưa có món nào trong đơn!'); return; }
+
+    const total = currentCart.reduce((s, i) => s + i.price * i.qty, 0);
+
+    // FIREBASE: thay localStorage bằng push vào Firebase
+    // Ví dụ: for (const item of currentCart) { await fbPush(fbRef(db, 'orders'), item); }
+    orders.push(...currentCart.map(item => ({ ...item, timestamp: Date.now() })));
+    localStorage.setItem('all_orders', JSON.stringify(orders));
+
+    // Hiện modal xác nhận
+    const summaryEl = document.getElementById('modal-summary');
+    summaryEl.innerHTML = currentCart.map(item => `
+        <div class="flex justify-between items-center py-1">
+            <div>
+                <span class="font-bold">${item.drinkName}</span>
+                <span class="text-slate-400 text-xs ml-1">× ${item.qty}</span>
+                <span class="text-slate-400 text-xs block">của ${item.name}${item.note ? ' — ' + item.note : ''}</span>
+            </div>
+            <span class="font-bold text-ocean-600 text-sm">${formatMoney(item.qty * item.price)}</span>
+        </div>
+    `).join('');
+    document.getElementById('modal-total').textContent = formatMoney(total);
+    document.getElementById('success-modal').classList.remove('hidden');
+
+    currentCart = [];
+    renderCart();
+    renderSharedOrderView();
+}
+
+function closeSuccessModal() {
+    document.getElementById('success-modal').classList.add('hidden');
+}
+
+// Hiện đơn của mọi người trong phiên hiện tại (không cần đăng nhập)
+function renderSharedOrderView() {
+    const today = document.getElementById('order-date').value;
+    const todayOrders = orders.filter(o => o.date === today);
+    const banner = document.getElementById('shared-order-banner');
+    const list = document.getElementById('shared-order-list');
+
+    if (todayOrders.length === 0) {
+        banner.classList.add('hidden');
+        return;
+    }
+    banner.classList.remove('hidden');
+
+    // Gom theo loại nước (tổng số lượng + danh sách tên)
+    const byDrink = {};
+    todayOrders.forEach(o => {
+        if (!byDrink[o.drinkName]) byDrink[o.drinkName] = { qty: 0, names: [] };
+        byDrink[o.drinkName].qty += o.qty;
+        byDrink[o.drinkName].names.push(o.name);
+    });
+
+    list.innerHTML = Object.entries(byDrink).map(([drink, info]) =>
+        `<div class="flex gap-2"><span class="font-bold text-ocean-700 shrink-0">• ${drink} ×${info.qty}:</span><span class="text-slate-500">${info.names.join(', ')}</span></div>`
+    ).join('');
+}
+
+// =====================================================
+// ADMIN: ĐĂNG NHẬP / ĐĂNG XUẤT
+// =====================================================
+function loginAdmin() {
+    const u = document.getElementById('admin-user').value.trim();
+    const p = document.getElementById('admin-pass').value;
+    // FIREBASE: có thể dùng Firebase Auth thay hardcode
+    if (u === 'Coffee' && p === '2026') {
+        isAdminLoggedIn = true;
+        document.getElementById('admin-login-box').classList.add('hidden');
+        document.getElementById('admin-content').classList.remove('hidden');
+        document.getElementById('login-error').classList.add('hidden');
+        renderAdminDashboard();
+        renderMenuTable();
+    } else {
+        document.getElementById('login-error').classList.remove('hidden');
+    }
+}
+
+function logoutAdmin() {
+    isAdminLoggedIn = false;
+    document.getElementById('admin-content').classList.add('hidden');
+    document.getElementById('admin-login-box').classList.remove('hidden');
+    document.getElementById('admin-user').value = '';
+    document.getElementById('admin-pass').value = '';
+}
+
+// =====================================================
+// ADMIN: TÊN QUÁN
+// =====================================================
+function changeShopName() {
+    const n = document.getElementById('shop-name-input').value.trim();
+    if (!n) return;
+    shopName = n;
+    // FIREBASE: fbSet(fbRef(db, 'shopName'), shopName);
+    localStorage.setItem('shop_name', shopName);
+    document.getElementById('shop-name-display').innerText = shopName;
+    alert('✅ Đã cập nhật tên quán: ' + shopName);
+}
+
+// =====================================================
+// ADMIN: RESET ĐƠN HÀNG
+// =====================================================
+function resetOrders() {
+    if (!confirm('⚠️ Bạn có chắc muốn xóa TOÀN BỘ đơn hàng hiện tại?\nHành động này không thể hoàn tác!')) return;
+    orders = [];
+    // FIREBASE: fbSet(fbRef(db, 'orders'), null);
+    localStorage.setItem('all_orders', JSON.stringify(orders));
+    renderAdminDashboard();
+    renderSharedOrderView();
+    alert('✅ Đã reset. Khách hàng sẽ thấy phiên đặt hàng mới hoàn toàn.');
+}
+
+// =====================================================
+// ADMIN: DASHBOARD
+// =====================================================
+function renderAdminDashboard() {
+    const filterDate = document.getElementById('admin-filter-date').value;
+    const filterDept = (document.getElementById('filter-dept')?.value || '').toLowerCase();
+    const now = new Date();
+    const todayStr = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
+    const monthStr = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
+
+    // Lọc theo ngày và đơn vị
+    const dayOrders = orders.filter(o => {
+        const dateMatch = o.date === filterDate;
+        const deptMatch = !filterDept || (o.dept || '').toLowerCase().includes(filterDept);
+        return dateMatch && deptMatch;
+    });
+
+    const todayOrders = orders.filter(o => o.date === todayStr);
+    const monthOrders = orders.filter(o => o.date && o.date.startsWith(monthStr));
+
+    // Stats
+    const dayRev = dayOrders.reduce((s, o) => s + o.price * o.qty, 0);
+    const todayRev = todayOrders.reduce((s, o) => s + o.price * o.qty, 0);
+    const todayCups = todayOrders.reduce((s, o) => s + o.qty, 0);
+    const monthRev = monthOrders.reduce((s, o) => s + o.price * o.qty, 0);
+    document.getElementById('stat-today-rev').textContent = formatMoney(todayRev);
+    document.getElementById('stat-today-orders').textContent = todayOrders.length;
+    document.getElementById('stat-today-cups').textContent = todayCups + ' ly';
+    document.getElementById('stat-month-rev').textContent = formatMoney(monthRev);
+
+    // Tổng hợp món cần chuẩn bị (gom số lượng + danh sách tên)
+    const drinkCount = {};
+    dayOrders.forEach(o => {
+        if (!drinkCount[o.drinkName]) drinkCount[o.drinkName] = { qty: 0, names: [] };
+        drinkCount[o.drinkName].qty += o.qty;
+        drinkCount[o.drinkName].names.push(o.name);
+    });
+    const sortedDrinks = Object.entries(drinkCount).sort((a, b) => b[1].qty - a[1].qty);
+    const summaryTable = document.getElementById('summary-drink-table');
+    if (sortedDrinks.length === 0) {
+        summaryTable.innerHTML = `<tr><td colspan="3" class="py-8 text-center text-slate-300 text-sm">Không có đơn nào</td></tr>`;
+    } else {
+        summaryTable.innerHTML = sortedDrinks.map(([drink, info]) => `
+            <tr class="hover:bg-slate-50">
+                <td class="py-2 pr-3 text-slate-700">${drink}</td>
+                <td class="py-2 text-center">
+                    <span class="bg-ocean-100 text-ocean-700 font-black text-sm px-2.5 py-0.5 rounded-full">${info.qty}</span>
+                </td>
+                <td class="py-2 pl-3 text-slate-500 text-xs">${info.names.join(', ')}</td>
+            </tr>
+        `).join('');
+    }
+
+    // Chi tiết đơn hàng
+    const detailTable = document.getElementById('admin-detail-table');
+    if (dayOrders.length === 0) {
+        detailTable.innerHTML = `<tr><td colspan="6" class="py-8 text-center text-slate-300 text-sm">Không có đơn hàng</td></tr>`;
+    } else {
+        detailTable.innerHTML = dayOrders.map(o => `
+            <tr class="hover:bg-slate-50 transition-colors">
+                <td class="p-2 text-slate-500 text-xs">${o.dept || '—'}</td>
+                <td class="p-2 font-semibold text-slate-800">${o.name}</td>
+                <td class="p-2 text-slate-700">${o.drinkName}</td>
+                <td class="p-2 text-center font-bold text-ocean-600">${o.qty}</td>
+                <td class="p-2 text-right font-bold text-slate-700">${formatMoney(o.price * o.qty)}</td>
+                <td class="p-2 text-slate-400 text-xs italic">${o.note || '—'}</td>
+            </tr>
+        `).join('');
+    }
+
+    // Báo cáo tháng
+    renderMonthlyChart();
+}
+
+function renderMonthlyChart() {
+    const year = document.getElementById('revenue-year').value;
+    const chartEl = document.getElementById('monthly-chart');
+    const months = ['T1','T2','T3','T4','T5','T6','T7','T8','T9','T10','T11','T12'];
+
+    const monthlyRevs = months.map((_, i) => {
+        const m = String(i + 1).padStart(2, '0');
+        const prefix = `${year}-${m}`;
+        return orders.filter(o => o.date && o.date.startsWith(prefix))
+            .reduce((s, o) => s + o.price * o.qty, 0);
+    });
+
+    const max = Math.max(...monthlyRevs, 1);
+    const now = new Date();
+
+    chartEl.innerHTML = months.map((m, i) => {
+        const rev = monthlyRevs[i];
+        const pct = Math.round((rev / max) * 100);
+        const isCurrentMonth = parseInt(year) === now.getFullYear() && i === now.getMonth();
+        return `
+            <div class="flex items-center gap-3">
+                <span class="text-xs font-bold text-slate-400 w-6 text-right">${m}</span>
+                <div class="flex-1 bg-slate-100 rounded-full h-5 relative overflow-hidden">
+                    <div class="h-full rounded-full transition-all duration-500 ${isCurrentMonth ? 'bg-ocean-500' : 'bg-ocean-200'}"
+                        style="width:${pct}%"></div>
+                </div>
+                <span class="text-xs font-bold ${rev > 0 ? 'text-slate-700' : 'text-slate-300'} w-20 text-right">${rev > 0 ? formatMoney(rev) : '—'}</span>
+            </div>
+        `;
+    }).join('');
+}
+
+// =====================================================
+// ADMIN: QUẢN LÝ MENU
+// =====================================================
+function renderMenuTable() {
+    const search = (document.getElementById('menu-search')?.value || '').toLowerCase();
+    const filterCat = document.getElementById('menu-filter-cat')?.value || '';
+    const tbody = document.getElementById('admin-menu-table');
+
+    // Cập nhật datalist
+    const cats = [...new Set(menu.map(d => d.cat))];
+    document.getElementById('menu-filter-cat').innerHTML =
+        `<option value="">Tất cả loại</option>` +
+        cats.map(c => `<option value="${c}">${c}</option>`).join('');
+
+    const filtered = menu.filter(d =>
+        (!filterCat || d.cat === filterCat) &&
+        (!search || d.name.toLowerCase().includes(search) || d.cat.toLowerCase().includes(search))
+    );
+
+    if (filtered.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="4" class="py-8 text-center text-slate-300 text-sm">Không tìm thấy món</td></tr>`;
+        return;
+    }
+
+    tbody.innerHTML = filtered.map((d, i) => {
+        const realIndex = menu.indexOf(d);
+        return `
+        <tr class="hover:bg-slate-50 transition-colors">
+            <td class="p-2.5">
+                <span class="bg-ocean-50 text-ocean-700 text-xs font-bold px-2 py-0.5 rounded-full">${d.cat}</span>
+            </td>
+            <td class="p-2.5 font-medium text-slate-700">${d.name}</td>
+            <td class="p-2.5 text-right font-bold text-slate-800">${d.price}k</td>
+            <td class="p-2.5 text-center">
+                <button onclick="editDrink(${realIndex})" class="text-ocean-500 hover:text-ocean-700 font-bold text-xs px-2 py-1 rounded hover:bg-ocean-50 mr-1">Sửa</button>
+                <button onclick="deleteDrink(${realIndex})" class="text-rose-400 hover:text-rose-600 font-bold text-xs px-2 py-1 rounded hover:bg-rose-50">Xóa</button>
+            </td>
+        </tr>
+    `}).join('');
+}
+
+function populateCatSuggestions() {
+    const dl = document.getElementById('cat-suggestions');
+    if (!dl) return;
+    const cats = [...new Set(menu.map(d => d.cat))];
+    dl.innerHTML = cats.map(c => `<option value="${c}">`).join('');
+}
+
+function openAddDrinkModal() {
+    document.getElementById('drink-modal-title').textContent = 'Thêm Món Mới';
+    document.getElementById('edit-drink-index').value = '';
+    document.getElementById('modal-drink-cat').value = '';
+    document.getElementById('modal-drink-name').value = '';
+    document.getElementById('modal-drink-price').value = '';
+    populateCatSuggestions();
+    document.getElementById('drink-modal').classList.remove('hidden');
+}
+
+function editDrink(i) {
+    const d = menu[i];
+    document.getElementById('drink-modal-title').textContent = 'Sửa Món';
+    document.getElementById('edit-drink-index').value = i;
+    document.getElementById('modal-drink-cat').value = d.cat;
+    document.getElementById('modal-drink-name').value = d.name;
+    document.getElementById('modal-drink-price').value = d.price;
+    populateCatSuggestions();
+    document.getElementById('drink-modal').classList.remove('hidden');
+}
+
+function saveDrink() {
+    const cat = document.getElementById('modal-drink-cat').value.trim();
+    const name = document.getElementById('modal-drink-name').value.trim();
+    const price = parseInt(document.getElementById('modal-drink-price').value);
+    if (!cat || !name || !price) { alert('Vui lòng điền đầy đủ thông tin!'); return; }
+
+    const idx = document.getElementById('edit-drink-index').value;
+    if (idx === '') {
+        menu.push({ cat, name, price });
+    } else {
+        menu[parseInt(idx)] = { cat, name, price };
+    }
+
+    // FIREBASE: fbSet(fbRef(db, 'menu'), menu);
+    localStorage.setItem('drink_menu', JSON.stringify(menu));
+    initMenuDropdowns();
+    renderMenuTable();
+    closeDrinkModal();
+}
+
+function deleteDrink(i) {
+    if (!confirm(`Xóa món "${menu[i].name}"?`)) return;
+    menu.splice(i, 1);
+    // FIREBASE: fbSet(fbRef(db, 'menu'), menu);
+    localStorage.setItem('drink_menu', JSON.stringify(menu));
+    initMenuDropdowns();
+    renderMenuTable();
+}
+
+function closeDrinkModal() {
+    document.getElementById('drink-modal').classList.add('hidden');
+}
+
+// =====================================================
+// HELPERS
+// =====================================================
+function formatMoney(k) {
+    if (!k) return '0đ';
+    return (k * 1000).toLocaleString('vi-VN') + 'đ';
+}
+
+// Đóng modal khi click backdrop
+document.getElementById('success-modal').addEventListener('click', function(e) {
+    if (e.target === this) closeSuccessModal();
+});
+document.getElementById('drink-modal').addEventListener('click', function(e) {
+    if (e.target === this) closeDrinkModal();
+});
+</script>
+</body>
+</html>
