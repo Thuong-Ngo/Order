@@ -13,6 +13,17 @@
     3. Bật Authentication (Anonymous)
     4. Thay toàn bộ phần FIREBASE CONFIG bên dưới
     5. Tìm comment "// FIREBASE:" để biết chỗ cần thay thế
+
+    CẤU TRÚC DỮ LIỆU:
+    - orders: TOÀN BỘ đơn hàng từng được tạo (không bao giờ xóa khi admin
+      reset). Mỗi đơn có trường sessionId để biết thuộc phiên đặt hàng nào.
+    - currentSessionId: số thứ tự phiên đặt hàng đang hoạt động. Tăng lên 1
+      mỗi khi admin bấm "Reset Đơn Hàng Mới".
+    - resetSessions: lịch sử các phiên đã reset, mỗi phần tử gồm
+      { id, resetAt, orderCount, revenue } — dùng để hiển thị "Lịch sử phiên".
+    => Nhờ cấu trúc này, reset chỉ "đóng phiên" hiện tại (ẩn khỏi giao diện
+    khách hàng) chứ KHÔNG xóa dữ liệu, nên báo cáo doanh thu theo ngày/tháng
+    và lịch sử đơn hàng cũ vẫn xem lại được bình thường.
     ======================================================
     -->
 
@@ -42,10 +53,27 @@
         window.FIREBASE_READY = true;
 
         // Lắng nghe đơn hàng realtime
+        // LƯU Ý: node 'orders' lưu TOÀN BỘ lịch sử đơn hàng (không bao giờ bị xóa
+        // khi reset), mỗi đơn có trường sessionId để biết thuộc phiên nào.
         onValue(ref(window.db, 'orders'), (snapshot) => {
             orders = snapshot.val() ? Object.values(snapshot.val()) : [];
             if (isAdminLoggedIn) renderAdminDashboard();
             renderSharedOrderView();
+        });
+
+        // Lắng nghe phiên đơn hàng hiện tại (tăng lên mỗi lần admin reset)
+        onValue(ref(window.db, 'currentSessionId'), (snapshot) => {
+            if (snapshot.val()) {
+                currentSessionId = snapshot.val();
+                updateSessionLabel();
+                renderSharedOrderView();
+                if (isAdminLoggedIn) renderAdminDashboard();
+            }
+        });
+
+        // Lắng nghe lịch sử các phiên đã reset
+        onValue(ref(window.db, 'resetSessions'), (snapshot) => {
+            resetSessions = snapshot.val() ? Object.values(snapshot.val()) : [];
         });
 
         // Lắng nghe menu realtime
@@ -310,11 +338,22 @@
             <div class="bg-white rounded-xl p-4 shadow-sm border border-slate-100 flex flex-col justify-between">
                 <div>
                     <p class="text-xs font-bold text-slate-400 mb-1">Reset đơn hàng</p>
-                    <p class="text-xs text-slate-400 leading-relaxed">Xóa toàn bộ đơn hàng hiện tại để bắt đầu phiên mới cho khách.</p>
+                    <p class="text-xs text-slate-400 leading-relaxed">Bắt đầu phiên đặt hàng mới. Đơn cũ vẫn được lưu vào lịch sử, doanh thu không bị mất.</p>
                 </div>
                 <button onclick="resetOrders()"
                     class="mt-2 w-full bg-rose-500 hover:bg-rose-600 text-white text-xs font-bold py-2 rounded-lg">
                     💥 Reset Đơn Hàng Mới
+                </button>
+            </div>
+
+            <div class="bg-white rounded-xl p-4 shadow-sm border border-slate-100 flex flex-col justify-between">
+                <div>
+                    <p class="text-xs font-bold text-slate-400 mb-1">Lịch sử phiên</p>
+                    <p class="text-xs text-slate-400 leading-relaxed">Xem lại các đơn hàng của những phiên đã reset trước đó.</p>
+                </div>
+                <button onclick="openHistoryModal()"
+                    class="mt-2 w-full bg-violet-500 hover:bg-violet-600 text-white text-xs font-bold py-2 rounded-lg">
+                    🕘 Xem Lịch Sử
                 </button>
             </div>
 
@@ -328,6 +367,11 @@
                     🔓 Đăng Xuất
                 </button>
             </div>
+        </div>
+
+        <!-- Banner phiên hiện tại -->
+        <div id="current-session-banner" class="bg-violet-50 border border-violet-200 rounded-xl px-4 py-2 text-xs text-violet-700 font-bold">
+            🟣 Đang ở phiên đơn hàng #<span id="current-session-label">1</span>
         </div>
 
         <!-- Stats Cards -->
@@ -476,6 +520,37 @@
             class="w-full bg-ocean-500 hover:bg-ocean-600 text-white font-bold py-3 rounded-xl transition-all">
             Đóng & Đặt tiếp
         </button>
+    </div>
+</div>
+
+<!-- Modal Lịch sử các phiên đã reset -->
+<div id="history-modal" class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 hidden modal-backdrop">
+    <div class="bg-white rounded-2xl max-w-3xl w-full p-6 shadow-2xl fade-in max-h-[85vh] flex flex-col">
+        <div class="flex items-center justify-between mb-3">
+            <h3 class="text-lg font-black text-slate-800">🕘 Lịch Sử Các Phiên Đơn Hàng</h3>
+            <button onclick="closeHistoryModal()" class="text-slate-300 hover:text-rose-400 text-2xl leading-none">×</button>
+        </div>
+        <p class="text-xs text-slate-400 mb-3">Mỗi lần bấm "Reset Đơn Hàng Mới", phiên hiện tại sẽ được lưu lại tại đây. Doanh thu của các phiên này vẫn được tính đầy đủ trong báo cáo doanh thu.</p>
+        <div class="flex-1 overflow-y-auto grid grid-cols-1 md:grid-cols-2 gap-4 min-h-0">
+            <div class="overflow-y-auto border border-slate-100 rounded-xl p-2 max-h-[60vh]">
+                <p class="text-xs font-bold text-slate-400 px-2 pb-2">Danh sách phiên</p>
+                <div id="history-session-list" class="space-y-1"></div>
+            </div>
+            <div class="overflow-y-auto border border-slate-100 rounded-xl p-3 max-h-[60vh]">
+                <p class="text-xs font-bold text-slate-400 mb-2">Chi tiết đơn hàng của phiên đã chọn</p>
+                <table class="w-full text-xs">
+                    <thead class="text-slate-400 uppercase">
+                        <tr>
+                            <th class="text-left pb-1">Người đặt</th>
+                            <th class="text-left pb-1">Món</th>
+                            <th class="text-center pb-1">SL</th>
+                            <th class="text-right pb-1">Tiền</th>
+                        </tr>
+                    </thead>
+                    <tbody id="history-session-detail" class="divide-y divide-slate-50"></tbody>
+                </table>
+            </div>
+        </div>
     </div>
 </div>
 
@@ -628,8 +703,17 @@ const defaultMenu = [
 // FIREBASE: Thay localStorage bằng Firebase Realtime Database
 // Khi tích hợp Firebase, xóa 3 dòng dưới và dùng onValue listeners trong module firebase
 let menu = JSON.parse(localStorage.getItem('drink_menu')) || JSON.parse(JSON.stringify(defaultMenu));
+// "orders" lưu TOÀN BỘ đơn hàng từng được tạo, không bao giờ bị xóa khi reset.
+// Mỗi đơn có trường sessionId để biết đơn đó thuộc phiên nào -> nhờ vậy
+// reset chỉ "đóng phiên" hiện tại chứ không xóa dữ liệu, báo cáo doanh thu
+// và lịch sử vẫn tính được trên toàn bộ orders.
 let orders = JSON.parse(localStorage.getItem('all_orders')) || [];
 let shopName = localStorage.getItem('shop_name') || 'QUÁN CAFE THUÝ';
+
+// Phiên đơn hàng hiện tại (tăng lên mỗi lần admin bấm Reset)
+let currentSessionId = parseInt(localStorage.getItem('current_session_id')) || 1;
+// Lịch sử các phiên đã reset: [{ id, resetAt, orderCount, revenue }]
+let resetSessions = JSON.parse(localStorage.getItem('reset_sessions')) || [];
 
 let currentCart = [];
 let isAdminLoggedIn = false;
@@ -660,7 +744,13 @@ window.onload = function () {
     initMenuDropdowns();
     renderCart();
     renderSharedOrderView();
+    updateSessionLabel();
 };
+
+function updateSessionLabel() {
+    const el = document.getElementById('current-session-label');
+    if (el) el.textContent = currentSessionId;
+}
 
 // =====================================================
 // CHUYỂN VIEW
@@ -785,7 +875,7 @@ function submitOrder() {
 
     // FIREBASE: thay localStorage bằng push vào Firebase
     // Ví dụ: for (const item of currentCart) { await fbPush(fbRef(db, 'orders'), item); }
-    orders.push(...currentCart.map(item => ({ ...item, timestamp: Date.now() })));
+    orders.push(...currentCart.map(item => ({ ...item, timestamp: Date.now(), sessionId: currentSessionId })));
     localStorage.setItem('all_orders', JSON.stringify(orders));
 
     // Hiện modal xác nhận
@@ -815,7 +905,7 @@ function closeSuccessModal() {
 // Hiện đơn của mọi người trong phiên hiện tại (không cần đăng nhập)
 function renderSharedOrderView() {
     const today = document.getElementById('order-date').value;
-    const todayOrders = orders.filter(o => o.date === today);
+    const todayOrders = orders.filter(o => o.date === today && o.sessionId === currentSessionId);
     const banner = document.getElementById('shared-order-banner');
     const list = document.getElementById('shared-order-list');
 
@@ -879,16 +969,88 @@ function changeShopName() {
 }
 
 // =====================================================
-// ADMIN: RESET ĐƠN HÀNG
+// ADMIN: RESET ĐƠN HÀNG (đóng phiên hiện tại, không xóa dữ liệu)
 // =====================================================
 function resetOrders() {
-    if (!confirm('⚠️ Bạn có chắc muốn xóa TOÀN BỘ đơn hàng hiện tại?\nHành động này không thể hoàn tác!')) return;
-    orders = [];
-    // FIREBASE: fbSet(fbRef(db, 'orders'), null);
-    localStorage.setItem('all_orders', JSON.stringify(orders));
+    if (!confirm('⚠️ Bạn có chắc muốn bắt đầu phiên đơn hàng mới?\nĐơn hàng của phiên hiện tại sẽ được lưu vào "Lịch sử phiên" và không bị mất.')) return;
+
+    const sessionOrders = orders.filter(o => o.sessionId === currentSessionId);
+    const sessionRevenue = sessionOrders.reduce((s, o) => s + o.price * o.qty, 0);
+
+    // Lưu lại thông tin phiên vừa kết thúc vào lịch sử
+    resetSessions.push({
+        id: currentSessionId,
+        resetAt: Date.now(),
+        orderCount: sessionOrders.length,
+        revenue: sessionRevenue
+    });
+
+    // Chuyển sang phiên mới — KHÔNG xóa orders, chỉ tăng sessionId
+    currentSessionId += 1;
+
+    // FIREBASE: fbSet(fbRef(db, 'currentSessionId'), currentSessionId);
+    // FIREBASE: fbSet(fbRef(db, 'resetSessions'), resetSessions);
+    // Lưu ý: KHÔNG xóa node 'orders' trên Firebase nữa, để báo cáo doanh thu
+    // và lịch sử phiên luôn lấy được dữ liệu đầy đủ.
+    localStorage.setItem('current_session_id', currentSessionId);
+    localStorage.setItem('reset_sessions', JSON.stringify(resetSessions));
+
     renderAdminDashboard();
     renderSharedOrderView();
-    alert('✅ Đã reset. Khách hàng sẽ thấy phiên đặt hàng mới hoàn toàn.');
+    updateSessionLabel();
+    alert('✅ Đã bắt đầu phiên đơn hàng mới (#' + currentSessionId + '). Đơn hàng cũ vẫn được lưu trong "Lịch sử phiên" và báo cáo doanh thu.');
+}
+
+// =====================================================
+// ADMIN: LỊCH SỬ CÁC PHIÊN ĐÃ RESET
+// =====================================================
+function openHistoryModal() {
+    const listEl = document.getElementById('history-session-list');
+    const detailEl = document.getElementById('history-session-detail');
+    detailEl.innerHTML = `<tr><td colspan="4" class="py-6 text-center text-slate-300">Chọn một phiên bên trái để xem chi tiết</td></tr>`;
+
+    if (resetSessions.length === 0) {
+        listEl.innerHTML = `<p class="text-xs text-slate-300 text-center py-6">Chưa có phiên nào được reset.</p>`;
+    } else {
+        // Hiện phiên mới nhất lên trên
+        listEl.innerHTML = [...resetSessions].reverse().map(s => {
+            const d = new Date(s.resetAt);
+            const dateStr = d.toLocaleString('vi-VN');
+            return `
+                <button onclick="showHistorySession(${s.id})"
+                    class="w-full text-left px-3 py-2 rounded-lg hover:bg-violet-50 border border-slate-100 text-xs">
+                    <p class="font-bold text-slate-700">Phiên #${s.id}</p>
+                    <p class="text-slate-400">${dateStr}</p>
+                    <p class="text-slate-500">${s.orderCount} đơn · <span class="font-bold text-ocean-600">${formatMoney(s.revenue)}</span></p>
+                </button>
+            `;
+        }).join('');
+    }
+
+    document.getElementById('history-modal').classList.remove('hidden');
+}
+
+function closeHistoryModal() {
+    document.getElementById('history-modal').classList.add('hidden');
+}
+
+function showHistorySession(sessionId) {
+    const detailEl = document.getElementById('history-session-detail');
+    const sessionOrders = orders.filter(o => o.sessionId === sessionId);
+
+    if (sessionOrders.length === 0) {
+        detailEl.innerHTML = `<tr><td colspan="4" class="py-6 text-center text-slate-300">Không có đơn hàng nào trong phiên này</td></tr>`;
+        return;
+    }
+
+    detailEl.innerHTML = sessionOrders.map(o => `
+        <tr>
+            <td class="py-1 font-semibold text-slate-700">${o.name}</td>
+            <td class="py-1 text-slate-600">${o.drinkName}</td>
+            <td class="py-1 text-center text-ocean-600 font-bold">${o.qty}</td>
+            <td class="py-1 text-right font-bold text-slate-700">${formatMoney(o.price * o.qty)}</td>
+        </tr>
+    `).join('');
 }
 
 // =====================================================
