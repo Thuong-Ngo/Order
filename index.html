@@ -42,16 +42,13 @@
         import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 
         const firebaseConfig = {
-            apiKey: "AIzaSyCSj4urEOl6Xhwx04crPslgMwimTisEH7U",
-            authDomain: "order-e9771.firebaseapp.com",
-            // ⚠️ CẦN ĐIỀN: mở Firebase Console > Realtime Database > trang dữ liệu,
-            // copy URL hiển thị ở trên cùng (dạng https://order-e9771-default-rtdb.<region>.firebasedatabase.app)
-            // và dán vào đây. Thiếu dòng này thì mọi thao tác đọc/ghi sẽ lỗi.
-            databaseURL: "PASTE_DATABASE_URL_HERE",
-            projectId: "order-e9771",
-            storageBucket: "order-e9771.firebasestorage.app",
-            messagingSenderId: "199510410776",
-            appId: "1:199510410776:web:5d90fee85778b40ea9656d"
+            apiKey: "AIzaSyByBSdtSdwpUa4Y4UZLqrS0o7f_ZD9GFyNhI",
+            authDomain: "order2-f9b4b.firebaseapp.com",
+            databaseURL: "https://order2-f9b4b-default-rtdb.asia-southeast1.firebasedatabase.app",
+            projectId: "order2-f9b4b",
+            storageBucket: "order2-f9b4b.firebasestorage.app",
+            messagingSenderId: "464291675298",
+            appId: "1:464291675298:web:ab480c21ed31f438ccebfb"
         };
         const app = initializeApp(firebaseConfig);
         window.db = getDatabase(app);
