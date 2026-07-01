@@ -15,32 +15,43 @@
     5. Tìm comment "// FIREBASE:" để biết chỗ cần thay thế
 
     CẤU TRÚC DỮ LIỆU:
-    - orders: TOÀN BỘ đơn hàng từng được tạo (không bao giờ xóa khi admin
-      reset). Mỗi đơn có trường sessionId để biết thuộc phiên đặt hàng nào.
+    - orders: các đơn hàng ĐANG HIỂN THỊ cho Admin quản lý (chưa reset). Mỗi
+      món trong giỏ khi khách đặt sẽ thành 1 record, nhiều record có cùng
+      "orderId" sẽ được Admin gộp lại thành 1 đơn hàng để xem chi tiết.
+    - revenueArchive: kho lưu trữ doanh thu theo ngày { 'YYYY-MM-DD': { revenue,
+      orderCount, cupCount } }. Khi admin bấm Reset, doanh thu của các đơn
+      hàng hiện tại được CỘNG DỒN vào đây trước khi xóa "orders" -> nhờ vậy
+      báo cáo doanh thu theo ngày/tháng không bao giờ bị mất dù đơn hàng đã
+      bị xóa khỏi danh sách quản lý.
     - currentSessionId: số thứ tự phiên đặt hàng đang hoạt động. Tăng lên 1
       mỗi khi admin bấm "Reset Đơn Hàng Mới".
     - resetSessions: lịch sử các phiên đã reset, mỗi phần tử gồm
-      { id, resetAt, orderCount, revenue } — dùng để hiển thị "Lịch sử phiên".
-    => Nhờ cấu trúc này, reset chỉ "đóng phiên" hiện tại (ẩn khỏi giao diện
-    khách hàng) chứ KHÔNG xóa dữ liệu, nên báo cáo doanh thu theo ngày/tháng
-    và lịch sử đơn hàng cũ vẫn xem lại được bình thường.
+      { id, resetAt, orderCount, revenue, orders } — "orders" là bản sao chi
+      tiết các đơn hàng của phiên đó, dùng để hiển thị "Lịch sử phiên" dù
+      node "orders" chính đã bị xóa.
+    => Nhờ cấu trúc này, reset sẽ XÓA danh sách đơn hàng hiện tại khỏi màn
+    hình quản lý của Admin, nhưng doanh thu theo ngày/tháng và lịch sử chi
+    tiết từng phiên vẫn xem lại được bình thường.
     ======================================================
     -->
 
-    <!-- FIREBASE SDK - Bỏ comment khi đã có config thật -->
-    <!--
+    <!-- FIREBASE SDK - ĐÃ KÍCH HOẠT -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
         import { getDatabase, ref, set, get, onValue, push, remove } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+        import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 
         const firebaseConfig = {
-            apiKey: "YOUR_API_KEY",
-            authDomain: "YOUR_PROJECT.firebaseapp.com",
-            databaseURL: "https://YOUR_PROJECT-default-rtdb.firebaseio.com",
-            projectId: "YOUR_PROJECT",
-            storageBucket: "YOUR_PROJECT.appspot.com",
-            messagingSenderId: "YOUR_ID",
-            appId: "YOUR_APP_ID"
+            apiKey: "AIzaSyCSj4urEOl6Xhwx04crPslgMwimTisEH7U",
+            authDomain: "order-e9771.firebaseapp.com",
+            // ⚠️ CẦN ĐIỀN: mở Firebase Console > Realtime Database > trang dữ liệu,
+            // copy URL hiển thị ở trên cùng (dạng https://order-e9771-default-rtdb.<region>.firebasedatabase.app)
+            // và dán vào đây. Thiếu dòng này thì mọi thao tác đọc/ghi sẽ lỗi.
+            databaseURL: "PASTE_DATABASE_URL_HERE",
+            projectId: "order-e9771",
+            storageBucket: "order-e9771.firebasestorage.app",
+            messagingSenderId: "199510410776",
+            appId: "1:199510410776:web:5d90fee85778b40ea9656d"
         };
         const app = initializeApp(firebaseConfig);
         window.db = getDatabase(app);
@@ -50,11 +61,17 @@
         window.fbOnValue = onValue;
         window.fbPush = push;
         window.fbRemove = remove;
+
+        // Đăng nhập ẩn danh (cần bật "Anonymous" trong Firebase Console > Authentication)
+        const auth = getAuth(app);
+        signInAnonymously(auth).catch((err) => console.error('Lỗi đăng nhập ẩn danh:', err));
+
         window.FIREBASE_READY = true;
 
         // Lắng nghe đơn hàng realtime
-        // LƯU Ý: node 'orders' lưu TOÀN BỘ lịch sử đơn hàng (không bao giờ bị xóa
-        // khi reset), mỗi đơn có trường sessionId để biết thuộc phiên nào.
+        // LƯU Ý: node 'orders' chỉ chứa các đơn hàng ĐANG hiển thị cho Admin quản lý.
+        // Khi admin bấm Reset, node này sẽ bị xóa (set null) sau khi doanh thu đã
+        // được cộng dồn vào 'revenueArchive'.
         onValue(ref(window.db, 'orders'), (snapshot) => {
             orders = snapshot.val() ? Object.values(snapshot.val()) : [];
             if (isAdminLoggedIn) renderAdminDashboard();
@@ -68,6 +85,9 @@
                 updateSessionLabel();
                 renderSharedOrderView();
                 if (isAdminLoggedIn) renderAdminDashboard();
+            } else {
+                // Chưa có dữ liệu trên Firebase -> khởi tạo lần đầu
+                set(ref(window.db, 'currentSessionId'), currentSessionId);
             }
         });
 
@@ -76,12 +96,21 @@
             resetSessions = snapshot.val() ? Object.values(snapshot.val()) : [];
         });
 
+        // Lắng nghe kho lưu trữ doanh thu theo ngày (không bị mất khi reset đơn hàng)
+        onValue(ref(window.db, 'revenueArchive'), (snapshot) => {
+            revenueArchive = snapshot.val() || {};
+            if (isAdminLoggedIn) renderAdminDashboard();
+        });
+
         // Lắng nghe menu realtime
         onValue(ref(window.db, 'menu'), (snapshot) => {
             if (snapshot.val()) {
                 menu = Object.values(snapshot.val());
                 initMenuDropdowns();
                 if (isAdminLoggedIn) renderMenuTable();
+            } else {
+                // Chưa có menu trên Firebase -> khởi tạo bằng menu mặc định
+                set(ref(window.db, 'menu'), menu);
             }
         });
 
@@ -91,10 +120,11 @@
                 shopName = snapshot.val();
                 document.getElementById('shop-name-display').innerText = shopName;
                 document.getElementById('shop-name-input').value = shopName;
+            } else {
+                set(ref(window.db, 'shopName'), shopName);
             }
         });
     </script>
-    -->
 
     <script>
         tailwind.config = {
@@ -164,6 +194,12 @@
 <!--  PHẦN KHÁCH ORDER                                             -->
 <!-- ============================================================ -->
 <section id="customer-section" class="space-y-5">
+
+    <!-- Banner cho khách biết đang đặt vào đơn hàng số mấy -->
+    <div class="bg-violet-50 border border-violet-200 rounded-xl px-4 py-2.5 flex items-center gap-2">
+        <span class="text-lg">🧾</span>
+        <p class="text-sm font-bold text-violet-700">Bạn đang đặt vào đơn hàng số #<span id="customer-session-label">1</span></p>
+    </div>
 
     <!-- Banner thông báo đơn hàng chung -->
     <div id="shared-order-banner" class="bg-ocean-50 border border-ocean-200 rounded-2xl p-4 hidden">
@@ -338,7 +374,7 @@
             <div class="bg-white rounded-xl p-4 shadow-sm border border-slate-100 flex flex-col justify-between">
                 <div>
                     <p class="text-xs font-bold text-slate-400 mb-1">Reset đơn hàng</p>
-                    <p class="text-xs text-slate-400 leading-relaxed">Bắt đầu phiên đặt hàng mới. Đơn cũ vẫn được lưu vào lịch sử, doanh thu không bị mất.</p>
+                    <p class="text-xs text-slate-400 leading-relaxed">Xóa danh sách đơn hàng hiện tại. Doanh thu theo ngày/tháng vẫn được giữ nguyên trong báo cáo.</p>
                 </div>
                 <button onclick="resetOrders()"
                     class="mt-2 w-full bg-rose-500 hover:bg-rose-600 text-white text-xs font-bold py-2 rounded-lg">
@@ -394,54 +430,44 @@
             </div>
         </div>
 
-        <!-- Main Dashboard -->
+        <!-- Main Dashboard: Quản lý theo đơn hàng -->
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
 
-            <!-- Tổng hợp món cần chuẩn bị -->
-            <div class="bg-white rounded-2xl p-5 shadow-sm border border-slate-100">
+            <!-- Danh sách đơn hàng -->
+            <div class="bg-white rounded-2xl p-5 shadow-sm border border-slate-100 flex flex-col">
                 <h3 class="font-bold text-slate-700 border-b border-slate-100 pb-3 mb-3 flex items-center gap-2">
-                    <span class="text-ocean-500">🥤</span> Cần chuẩn bị
-                    <span class="text-xs text-slate-400 font-normal">(theo ngày lọc)</span>
+                    <span class="text-ocean-500">🧾</span> Danh sách đơn
+                    <span class="text-xs text-slate-400 font-normal">(theo đơn hàng số)</span>
                 </h3>
-                <div class="overflow-y-auto max-h-72">
-                    <table class="w-full text-sm">
-                        <thead class="text-xs font-bold text-slate-400 uppercase">
-                            <tr>
-                                <th class="pb-2 text-left">Tên món</th>
-                                <th class="pb-2 text-center">SL</th>
-                                <th class="pb-2 text-left pl-3">Người đặt</th>
-                            </tr>
-                        </thead>
-                        <tbody id="summary-drink-table" class="divide-y divide-slate-50"></tbody>
-                    </table>
-                </div>
+                <input type="text" id="filter-dept" placeholder="Lọc đơn vị..." onkeyup="renderAdminDashboard()"
+                    class="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-xs mb-3 focus:outline-none focus:ring-1 focus:ring-ocean-400">
+                <div id="admin-order-list" class="space-y-2 overflow-y-auto max-h-72 flex-1"></div>
             </div>
 
-            <!-- Chi tiết đơn hàng theo ngày -->
+            <!-- Chi tiết đơn hàng đã chọn -->
             <div class="lg:col-span-2 bg-white rounded-2xl p-5 shadow-sm border border-slate-100">
                 <div class="flex items-center justify-between border-b border-slate-100 pb-3 mb-3">
                     <h3 class="font-bold text-slate-700 flex items-center gap-2">
                         <span class="text-ocean-500">📋</span> Chi tiết đơn hàng
                     </h3>
-                    <div class="flex gap-2 items-center">
-                        <input type="text" id="filter-dept" placeholder="Lọc đơn vị..." onkeyup="renderAdminDashboard()"
-                            class="border border-slate-200 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-ocean-400 w-28">
-                    </div>
+                    <span id="admin-order-detail-header" class="text-xs font-bold text-ocean-600"></span>
                 </div>
-                <div class="overflow-x-auto max-h-72 overflow-y-auto">
-                    <table class="w-full text-sm min-w-[500px]">
+                <div class="overflow-x-auto max-h-60 overflow-y-auto">
+                    <table class="w-full text-sm min-w-[460px]">
                         <thead class="text-xs font-bold text-slate-400 uppercase bg-slate-50 sticky top-0">
                             <tr>
-                                <th class="p-2 text-left rounded-l">Đơn vị</th>
+                                <th class="p-2 text-left rounded-l">Tên nước</th>
                                 <th class="p-2 text-left">Người đặt</th>
-                                <th class="p-2 text-left">Tên nước</th>
                                 <th class="p-2 text-center">SL</th>
-                                <th class="p-2 text-right">Giá</th>
-                                <th class="p-2 text-left rounded-r">Ghi chú</th>
+                                <th class="p-2 text-right rounded-r">Thành tiền</th>
                             </tr>
                         </thead>
-                        <tbody id="admin-detail-table" class="divide-y divide-slate-50"></tbody>
+                        <tbody id="admin-order-detail-table" class="divide-y divide-slate-50"></tbody>
                     </table>
+                </div>
+                <div class="flex justify-between items-center bg-ocean-50 rounded-xl px-4 py-3 mt-3">
+                    <span class="font-bold text-slate-700">Tổng cộng đơn:</span>
+                    <span id="admin-order-detail-total" class="font-black text-xl text-ocean-600">0đ</span>
                 </div>
             </div>
         </div>
@@ -700,20 +726,27 @@ const defaultMenu = [
 // =====================================================
 // TRẠNG THÁI ỨNG DỤNG
 // =====================================================
-// FIREBASE: Thay localStorage bằng Firebase Realtime Database
-// Khi tích hợp Firebase, xóa 3 dòng dưới và dùng onValue listeners trong module firebase
-let menu = JSON.parse(localStorage.getItem('drink_menu')) || JSON.parse(JSON.stringify(defaultMenu));
-// "orders" lưu TOÀN BỘ đơn hàng từng được tạo, không bao giờ bị xóa khi reset.
-// Mỗi đơn có trường sessionId để biết đơn đó thuộc phiên nào -> nhờ vậy
-// reset chỉ "đóng phiên" hiện tại chứ không xóa dữ liệu, báo cáo doanh thu
-// và lịch sử vẫn tính được trên toàn bộ orders.
-let orders = JSON.parse(localStorage.getItem('all_orders')) || [];
-let shopName = localStorage.getItem('shop_name') || 'QUÁN CAFE THUÝ';
+// Dữ liệu thật lấy từ Firebase Realtime Database qua các onValue listener
+// trong script module ở phần <head>. Các giá trị dưới đây chỉ là giá trị
+// khởi tạo ban đầu (hiển thị tạm trước khi Firebase đồng bộ xong, và cũng
+// là dữ liệu "seed" được ghi lên Firebase nếu đây là lần chạy đầu tiên).
+let menu = JSON.parse(JSON.stringify(defaultMenu));
+// "orders" chỉ lưu các đơn hàng ĐANG chờ Admin quản lý (chưa reset). Mỗi món
+// trong giỏ có chung "orderId" sẽ được gộp lại thành 1 đơn hàng khi hiển thị.
+let orders = [];
+let shopName = 'QUÁN CAFE THUÝ';
 
 // Phiên đơn hàng hiện tại (tăng lên mỗi lần admin bấm Reset)
-let currentSessionId = parseInt(localStorage.getItem('current_session_id')) || 1;
-// Lịch sử các phiên đã reset: [{ id, resetAt, orderCount, revenue }]
-let resetSessions = JSON.parse(localStorage.getItem('reset_sessions')) || [];
+let currentSessionId = 1;
+// Lịch sử các phiên đã reset: [{ id, resetAt, orderCount, revenue, orders }]
+let resetSessions = [];
+// Kho lưu trữ doanh thu theo ngày, KHÔNG bị mất khi reset đơn hàng:
+// { 'YYYY-MM-DD': { revenue, orderCount, cupCount } }
+let revenueArchive = {};
+// Số đơn hàng đang được chọn để xem chi tiết trong màn hình Admin
+// (đơn hàng số N = phiên hiện tại đang mở nếu N === currentSessionId,
+// hoặc 1 phiên đã reset trong resetSessions nếu N là số cũ)
+let selectedOrderNumber = null;
 
 let currentCart = [];
 let isAdminLoggedIn = false;
@@ -750,6 +783,8 @@ window.onload = function () {
 function updateSessionLabel() {
     const el = document.getElementById('current-session-label');
     if (el) el.textContent = currentSessionId;
+    const custEl = document.getElementById('customer-session-label');
+    if (custEl) custEl.textContent = currentSessionId;
 }
 
 // =====================================================
@@ -872,11 +907,16 @@ function submitOrder() {
     if (currentCart.length === 0) { alert('Chưa có món nào trong đơn!'); return; }
 
     const total = currentCart.reduce((s, i) => s + i.price * i.qty, 0);
+    const orderId = 'o' + Date.now() + Math.random().toString(36).slice(2, 7);
+    const timestamp = Date.now();
 
-    // FIREBASE: thay localStorage bằng push vào Firebase
-    // Ví dụ: for (const item of currentCart) { await fbPush(fbRef(db, 'orders'), item); }
-    orders.push(...currentCart.map(item => ({ ...item, timestamp: Date.now(), sessionId: currentSessionId })));
-    localStorage.setItem('all_orders', JSON.stringify(orders));
+    // Ghi từng món vào Firebase (mỗi món 1 record), gắn chung orderId + timestamp
+    // để Admin gộp lại thành 1 đơn hàng khi quản lý.
+    const newOrders = currentCart.map(item => ({ ...item, orderId, timestamp }));
+    orders.push(...newOrders);
+    if (window.FIREBASE_READY) {
+        newOrders.forEach(item => window.fbPush(window.fbRef(window.db, 'orders'), item));
+    }
 
     // Hiện modal xác nhận
     const summaryEl = document.getElementById('modal-summary');
@@ -905,7 +945,7 @@ function closeSuccessModal() {
 // Hiện đơn của mọi người trong phiên hiện tại (không cần đăng nhập)
 function renderSharedOrderView() {
     const today = document.getElementById('order-date').value;
-    const todayOrders = orders.filter(o => o.date === today && o.sessionId === currentSessionId);
+    const todayOrders = orders.filter(o => o.date === today);
     const banner = document.getElementById('shared-order-banner');
     const list = document.getElementById('shared-order-list');
 
@@ -962,43 +1002,62 @@ function changeShopName() {
     const n = document.getElementById('shop-name-input').value.trim();
     if (!n) return;
     shopName = n;
-    // FIREBASE: fbSet(fbRef(db, 'shopName'), shopName);
-    localStorage.setItem('shop_name', shopName);
+    if (window.FIREBASE_READY) window.fbSet(window.fbRef(window.db, 'shopName'), shopName);
     document.getElementById('shop-name-display').innerText = shopName;
     alert('✅ Đã cập nhật tên quán: ' + shopName);
 }
 
 // =====================================================
-// ADMIN: RESET ĐƠN HÀNG (đóng phiên hiện tại, không xóa dữ liệu)
+// ADMIN: RESET ĐƠN HÀNG (xóa danh sách đơn, giữ lại báo cáo doanh thu)
 // =====================================================
 function resetOrders() {
-    if (!confirm('⚠️ Bạn có chắc muốn bắt đầu phiên đơn hàng mới?\nĐơn hàng của phiên hiện tại sẽ được lưu vào "Lịch sử phiên" và không bị mất.')) return;
+    if (orders.length === 0) { alert('Không có đơn hàng nào để reset.'); return; }
+    if (!confirm('⚠️ Bạn có chắc muốn xóa danh sách đơn hàng hiện tại?\nDoanh thu theo ngày/tháng vẫn được giữ nguyên trong báo cáo, và chi tiết đơn cũ vẫn xem lại được trong "Lịch sử phiên".')) return;
 
-    const sessionOrders = orders.filter(o => o.sessionId === currentSessionId);
-    const sessionRevenue = sessionOrders.reduce((s, o) => s + o.price * o.qty, 0);
+    // Cộng dồn doanh thu của các đơn hàng hiện tại vào kho lưu trữ theo ngày
+    const byDate = {};
+    orders.forEach(o => {
+        if (!byDate[o.date]) byDate[o.date] = { orderIds: new Set(), revenue: 0, cupCount: 0 };
+        byDate[o.date].orderIds.add(o.orderId);
+        byDate[o.date].revenue += o.price * o.qty;
+        byDate[o.date].cupCount += o.qty;
+    });
+    Object.entries(byDate).forEach(([date, v]) => {
+        const prev = revenueArchive[date] || { revenue: 0, orderCount: 0, cupCount: 0 };
+        revenueArchive[date] = {
+            revenue: prev.revenue + v.revenue,
+            orderCount: prev.orderCount + v.orderIds.size,
+            cupCount: prev.cupCount + v.cupCount
+        };
+    });
 
-    // Lưu lại thông tin phiên vừa kết thúc vào lịch sử
+    // Lưu lại bản sao chi tiết của phiên này vào lịch sử (để xem lại trong "Lịch sử phiên")
+    const sessionRevenue = orders.reduce((s, o) => s + o.price * o.qty, 0);
+    const sessionOrderCount = new Set(orders.map(o => o.orderId)).size;
     resetSessions.push({
         id: currentSessionId,
         resetAt: Date.now(),
-        orderCount: sessionOrders.length,
-        revenue: sessionRevenue
+        orderCount: sessionOrderCount,
+        revenue: sessionRevenue,
+        orders: orders
     });
 
-    // Chuyển sang phiên mới — KHÔNG xóa orders, chỉ tăng sessionId
+    // Xóa danh sách đơn hàng hiện tại khỏi màn hình quản lý (cả local và Firebase)
+    orders = [];
+    selectedOrderNumber = null;
     currentSessionId += 1;
 
-    // FIREBASE: fbSet(fbRef(db, 'currentSessionId'), currentSessionId);
-    // FIREBASE: fbSet(fbRef(db, 'resetSessions'), resetSessions);
-    // Lưu ý: KHÔNG xóa node 'orders' trên Firebase nữa, để báo cáo doanh thu
-    // và lịch sử phiên luôn lấy được dữ liệu đầy đủ.
-    localStorage.setItem('current_session_id', currentSessionId);
-    localStorage.setItem('reset_sessions', JSON.stringify(resetSessions));
+    if (window.FIREBASE_READY) {
+        window.fbSet(window.fbRef(window.db, 'orders'), null);
+        window.fbSet(window.fbRef(window.db, 'revenueArchive'), revenueArchive);
+        window.fbSet(window.fbRef(window.db, 'resetSessions'), resetSessions);
+        window.fbSet(window.fbRef(window.db, 'currentSessionId'), currentSessionId);
+    }
 
     renderAdminDashboard();
     renderSharedOrderView();
     updateSessionLabel();
-    alert('✅ Đã bắt đầu phiên đơn hàng mới (#' + currentSessionId + '). Đơn hàng cũ vẫn được lưu trong "Lịch sử phiên" và báo cáo doanh thu.');
+    alert('✅ Đã xóa danh sách đơn hàng. Doanh thu theo ngày/tháng vẫn được lưu đầy đủ trong báo cáo.');
 }
 
 // =====================================================
@@ -1036,7 +1095,8 @@ function closeHistoryModal() {
 
 function showHistorySession(sessionId) {
     const detailEl = document.getElementById('history-session-detail');
-    const sessionOrders = orders.filter(o => o.sessionId === sessionId);
+    const session = resetSessions.find(s => s.id === sessionId);
+    const sessionOrders = session?.orders || [];
 
     if (sessionOrders.length === 0) {
         detailEl.innerHTML = `<tr><td colspan="4" class="py-6 text-center text-slate-300">Không có đơn hàng nào trong phiên này</td></tr>`;
@@ -1056,6 +1116,57 @@ function showHistorySession(sessionId) {
 // =====================================================
 // ADMIN: DASHBOARD
 // =====================================================
+
+// Lấy toàn bộ số đơn hàng đã từng tồn tại: đơn hàng hiện tại đang mở (currentSessionId)
+// + các đơn hàng đã reset trước đó (lưu trong resetSessions), sắp xếp mới nhất lên đầu
+function getAllOrderNumbers() {
+    const nums = new Set([currentSessionId, ...resetSessions.map(s => s.id)]);
+    return [...nums].sort((a, b) => b - a);
+}
+
+// Lấy danh sách các món (từng dòng khách đặt) thuộc về 1 đơn hàng số N
+function getItemsForOrderNumber(num) {
+    if (num === currentSessionId) return orders;
+    const session = resetSessions.find(s => s.id === num);
+    return session ? session.orders : [];
+}
+
+// Gom các món GIỐNG NHAU (cùng tên nước + cùng ghi chú) lại thành 1 dòng,
+// đồng thời gom tên những người đặt cùng món đó vào chung 1 dòng
+function groupItemsByDrink(items) {
+    const map = {};
+    items.forEach(it => {
+        const key = it.drinkName + '||' + (it.note || '');
+        if (!map[key]) map[key] = { drinkName: it.drinkName, note: it.note, price: it.price, qty: 0, nameQty: {} };
+        map[key].qty += it.qty;
+        map[key].nameQty[it.name] = (map[key].nameQty[it.name] || 0) + it.qty;
+    });
+    return Object.values(map).sort((a, b) => b.qty - a.qty);
+}
+
+// Kết hợp doanh thu đơn hàng còn sống (chưa reset) + doanh thu đã lưu trữ (đã reset)
+// để "Doanh thu hôm nay/tháng này" và biểu đồ theo tháng không bị mất dữ liệu sau khi reset.
+function getCombinedDailyStats() {
+    const stats = {};
+    Object.entries(revenueArchive).forEach(([date, v]) => {
+        stats[date] = { revenue: v.revenue, orderCount: v.orderCount, cupCount: v.cupCount };
+    });
+    const liveByDate = {};
+    orders.forEach(o => {
+        if (!liveByDate[o.date]) liveByDate[o.date] = { orderIds: new Set(), revenue: 0, cupCount: 0 };
+        liveByDate[o.date].orderIds.add(o.orderId);
+        liveByDate[o.date].revenue += o.price * o.qty;
+        liveByDate[o.date].cupCount += o.qty;
+    });
+    Object.entries(liveByDate).forEach(([date, v]) => {
+        if (!stats[date]) stats[date] = { revenue: 0, orderCount: 0, cupCount: 0 };
+        stats[date].revenue += v.revenue;
+        stats[date].orderCount += v.orderIds.size;
+        stats[date].cupCount += v.cupCount;
+    });
+    return stats;
+}
+
 function renderAdminDashboard() {
     const filterDate = document.getElementById('admin-filter-date').value;
     const filterDept = (document.getElementById('filter-dept')?.value || '').toLowerCase();
@@ -1063,71 +1174,121 @@ function renderAdminDashboard() {
     const todayStr = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
     const monthStr = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
 
-    // Lọc theo ngày và đơn vị
-    const dayOrders = orders.filter(o => {
-        const dateMatch = o.date === filterDate;
-        const deptMatch = !filterDept || (o.dept || '').toLowerCase().includes(filterDept);
-        return dateMatch && deptMatch;
+    // Chỉ giữ lại những đơn hàng số có ít nhất 1 món khớp với ngày/đơn vị đang lọc
+    const orderNumbers = getAllOrderNumbers().filter(num => {
+        const items = getItemsForOrderNumber(num);
+        return items.some(i =>
+            (!filterDate || i.date === filterDate) &&
+            (!filterDept || (i.dept || '').toLowerCase().includes(filterDept))
+        );
     });
 
-    const todayOrders = orders.filter(o => o.date === todayStr);
-    const monthOrders = orders.filter(o => o.date && o.date.startsWith(monthStr));
+    // Stats (kết hợp đơn còn sống + doanh thu đã lưu trữ)
+    const combinedStats = getCombinedDailyStats();
+    const todayRev = combinedStats[todayStr]?.revenue || 0;
+    const todayOrderCount = combinedStats[todayStr]?.orderCount || 0;
+    const todayCups = combinedStats[todayStr]?.cupCount || 0;
+    let monthRev = 0;
+    Object.entries(combinedStats).forEach(([d, v]) => { if (d.startsWith(monthStr)) monthRev += v.revenue; });
 
-    // Stats
-    const dayRev = dayOrders.reduce((s, o) => s + o.price * o.qty, 0);
-    const todayRev = todayOrders.reduce((s, o) => s + o.price * o.qty, 0);
-    const todayCups = todayOrders.reduce((s, o) => s + o.qty, 0);
-    const monthRev = monthOrders.reduce((s, o) => s + o.price * o.qty, 0);
     document.getElementById('stat-today-rev').textContent = formatMoney(todayRev);
-    document.getElementById('stat-today-orders').textContent = todayOrders.length;
+    document.getElementById('stat-today-orders').textContent = todayOrderCount;
     document.getElementById('stat-today-cups').textContent = todayCups + ' ly';
     document.getElementById('stat-month-rev').textContent = formatMoney(monthRev);
 
-    // Tổng hợp món cần chuẩn bị (gom số lượng + danh sách tên)
-    const drinkCount = {};
-    dayOrders.forEach(o => {
-        if (!drinkCount[o.drinkName]) drinkCount[o.drinkName] = { qty: 0, names: [] };
-        drinkCount[o.drinkName].qty += o.qty;
-        drinkCount[o.drinkName].names.push(o.name);
-    });
-    const sortedDrinks = Object.entries(drinkCount).sort((a, b) => b[1].qty - a[1].qty);
-    const summaryTable = document.getElementById('summary-drink-table');
-    if (sortedDrinks.length === 0) {
-        summaryTable.innerHTML = `<tr><td colspan="3" class="py-8 text-center text-slate-300 text-sm">Không có đơn nào</td></tr>`;
+    // Danh sách đơn hàng (bên trái) — mỗi dòng là 1 đơn hàng số N
+    const listEl = document.getElementById('admin-order-list');
+    if (orderNumbers.length === 0) {
+        listEl.innerHTML = `<p class="text-center text-slate-300 text-sm py-8">Không có đơn hàng</p>`;
+        selectedOrderNumber = null;
     } else {
-        summaryTable.innerHTML = sortedDrinks.map(([drink, info]) => `
-            <tr class="hover:bg-slate-50">
-                <td class="py-2 pr-3 text-slate-700">${drink}</td>
-                <td class="py-2 text-center">
-                    <span class="bg-ocean-100 text-ocean-700 font-black text-sm px-2.5 py-0.5 rounded-full">${info.qty}</span>
-                </td>
-                <td class="py-2 pl-3 text-slate-500 text-xs">${info.names.join(', ')}</td>
-            </tr>
-        `).join('');
+        if (!selectedOrderNumber || !orderNumbers.includes(selectedOrderNumber)) {
+            selectedOrderNumber = orderNumbers[0];
+        }
+        listEl.innerHTML = orderNumbers.map(num => {
+            const items = getItemsForOrderNumber(num);
+            const total = items.reduce((s, i) => s + i.price * i.qty, 0);
+            const cupCount = items.reduce((s, i) => s + i.qty, 0);
+            const isLive = num === currentSessionId;
+            const active = num === selectedOrderNumber;
+            return `
+                <button onclick="selectAdminOrderNumber(${num})"
+                    class="w-full text-left p-3 rounded-xl border transition-all ${active ? 'border-ocean-400 bg-ocean-50 shadow-sm' : 'border-slate-100 hover:bg-slate-50'}">
+                    <div class="flex justify-between items-center gap-2">
+                        <p class="font-bold text-sm text-slate-800 truncate">Đơn hàng #${num}${isLive ? ' <span class="text-emerald-500 font-normal">(đang mở)</span>' : ''}</p>
+                        <p class="font-black text-ocean-600 text-sm shrink-0">${formatMoney(total)}</p>
+                    </div>
+                    <p class="text-xs text-slate-400 mt-0.5">${cupCount} món</p>
+                </button>
+            `;
+        }).join('');
     }
 
-    // Chi tiết đơn hàng
-    const detailTable = document.getElementById('admin-detail-table');
-    if (dayOrders.length === 0) {
-        detailTable.innerHTML = `<tr><td colspan="6" class="py-8 text-center text-slate-300 text-sm">Không có đơn hàng</td></tr>`;
-    } else {
-        detailTable.innerHTML = dayOrders.map(o => `
-            <tr class="hover:bg-slate-50 transition-colors">
-                <td class="p-2 text-slate-500 text-xs">${o.dept || '—'}</td>
-                <td class="p-2 font-semibold text-slate-800">${o.name}</td>
-                <td class="p-2 text-slate-700">${o.drinkName}</td>
-                <td class="p-2 text-center font-bold text-ocean-600">${o.qty}</td>
-                <td class="p-2 text-right font-bold text-slate-700">${formatMoney(o.price * o.qty)}</td>
-                <td class="p-2 text-slate-400 text-xs italic">${o.note || '—'}</td>
-            </tr>
-        `).join('');
-    }
+    renderAdminOrderDetail();
 
     // Báo cáo tháng
-    renderMonthlyChart();
+    renderMonthlyChart(combinedStats);
 }
 
-function renderMonthlyChart() {
+function selectAdminOrderNumber(num) {
+    selectedOrderNumber = num;
+    renderAdminDashboard();
+}
+
+// Chi tiết đơn hàng số đang được chọn (bên phải): gom theo từng loại nước,
+// tên những người đặt giống nhau được gộp chung 1 dòng, kèm tổng cộng
+function renderAdminOrderDetail() {
+    const filterDate = document.getElementById('admin-filter-date').value;
+    const filterDept = (document.getElementById('filter-dept')?.value || '').toLowerCase();
+    const headerEl = document.getElementById('admin-order-detail-header');
+    const tableEl = document.getElementById('admin-order-detail-table');
+    const totalEl = document.getElementById('admin-order-detail-total');
+
+    if (!selectedOrderNumber) {
+        headerEl.textContent = '';
+        tableEl.innerHTML = `<tr><td colspan="4" class="py-8 text-center text-slate-300 text-sm">Chọn một đơn hàng bên trái để xem chi tiết</td></tr>`;
+        totalEl.textContent = '0đ';
+        return;
+    }
+
+    const isLive = selectedOrderNumber === currentSessionId;
+    headerEl.textContent = `Đơn hàng #${selectedOrderNumber}${isLive ? ' (đang mở)' : ''}`;
+
+    const items = getItemsForOrderNumber(selectedOrderNumber).filter(i =>
+        (!filterDate || i.date === filterDate) &&
+        (!filterDept || (i.dept || '').toLowerCase().includes(filterDept))
+    );
+
+    if (items.length === 0) {
+        tableEl.innerHTML = `<tr><td colspan="4" class="py-8 text-center text-slate-300 text-sm">Không có món nào</td></tr>`;
+        totalEl.textContent = '0đ';
+        return;
+    }
+
+    const grouped = groupItemsByDrink(items);
+    const total = items.reduce((s, i) => s + i.price * i.qty, 0);
+
+    tableEl.innerHTML = grouped.map(g => {
+        const names = Object.entries(g.nameQty)
+            .map(([name, qty]) => qty > 1 ? `${name} (x${qty})` : name)
+            .join(', ');
+        return `
+            <tr class="hover:bg-slate-50 transition-colors">
+                <td class="p-2 text-slate-700">
+                    ${g.drinkName}
+                    ${g.note ? `<span class="block text-xs text-slate-400 italic">"${g.note}"</span>` : ''}
+                </td>
+                <td class="p-2 text-slate-500">${names}</td>
+                <td class="p-2 text-center font-bold text-ocean-600">${g.qty}</td>
+                <td class="p-2 text-right font-bold text-slate-700">${formatMoney(g.price * g.qty)}</td>
+            </tr>
+        `;
+    }).join('');
+    totalEl.textContent = formatMoney(total);
+}
+
+function renderMonthlyChart(combinedStats) {
+    const stats = combinedStats || getCombinedDailyStats();
     const year = document.getElementById('revenue-year').value;
     const chartEl = document.getElementById('monthly-chart');
     const months = ['T1','T2','T3','T4','T5','T6','T7','T8','T9','T10','T11','T12'];
@@ -1135,8 +1296,9 @@ function renderMonthlyChart() {
     const monthlyRevs = months.map((_, i) => {
         const m = String(i + 1).padStart(2, '0');
         const prefix = `${year}-${m}`;
-        return orders.filter(o => o.date && o.date.startsWith(prefix))
-            .reduce((s, o) => s + o.price * o.qty, 0);
+        return Object.entries(stats)
+            .filter(([d]) => d.startsWith(prefix))
+            .reduce((s, [, v]) => s + v.revenue, 0);
     });
 
     const max = Math.max(...monthlyRevs, 1);
@@ -1241,8 +1403,7 @@ function saveDrink() {
         menu[parseInt(idx)] = { cat, name, price };
     }
 
-    // FIREBASE: fbSet(fbRef(db, 'menu'), menu);
-    localStorage.setItem('drink_menu', JSON.stringify(menu));
+    if (window.FIREBASE_READY) window.fbSet(window.fbRef(window.db, 'menu'), menu);
     initMenuDropdowns();
     renderMenuTable();
     closeDrinkModal();
@@ -1251,8 +1412,7 @@ function saveDrink() {
 function deleteDrink(i) {
     if (!confirm(`Xóa món "${menu[i].name}"?`)) return;
     menu.splice(i, 1);
-    // FIREBASE: fbSet(fbRef(db, 'menu'), menu);
-    localStorage.setItem('drink_menu', JSON.stringify(menu));
+    if (window.FIREBASE_READY) window.fbSet(window.fbRef(window.db, 'menu'), menu);
     initMenuDropdowns();
     renderMenuTable();
 }
